@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/Onely7/uv_torch_compass/compare/v0.1.1...v0.2.0) (2026-07-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* make strict CUDA compatibility the default ([#6](https://github.com/Onely7/uv_torch_compass/issues/6))
+
+### Features
+
+* make strict CUDA compatibility the default ([#6](https://github.com/Onely7/uv_torch_compass/issues/6)) ([2cdd82d](https://github.com/Onely7/uv_torch_compass/commit/2cdd82dd2d5891d3605c87d55f0684d05c27c1c2))
+
 ## [0.1.1](https://github.com/Onely7/uv_torch_compass/compare/v0.1.0...v0.1.1) (2026-07-23)
 
 
