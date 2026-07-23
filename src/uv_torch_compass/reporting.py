@@ -184,6 +184,26 @@ class CommandReporter:
         if document["selected_backend"]:
             print(f"Backend: {document['selected_backend']}", file=sys.stdout)
             print(f"Index: {document['selected_index']}", file=sys.stdout)
+            compatibility = document["validation"].get("compatibility", {})
+            if compatibility:
+                print(
+                    "CUDA compatibility: "
+                    f"{compatibility.get('level', 'unknown')} "
+                    f"({compatibility.get('reason', '')})",
+                    file=sys.stdout,
+                )
+        skipped = [
+            attempt
+            for attempt in document["candidate_attempts"]
+            if attempt["status"] == "skipped"
+        ]
+        if skipped:
+            print("Skipped candidates:", file=sys.stdout)
+            for attempt in skipped:
+                print(
+                    f"  - {attempt['backend']}: {attempt['reason']}",
+                    file=sys.stdout,
+                )
         print(f"Applied: {'yes' if document['applied'] else 'no'}", file=sys.stdout)
         if document["changes"]:
             print("Changes:", file=sys.stdout)
@@ -228,8 +248,14 @@ def _result_document(
             "torchvision_test": runtime.torchvision_test,
             "torchaudio_test": runtime.torchaudio_test,
         }
+        if outcome.compatibility is not None:
+            runtime_document["compatibility"] = {
+                "level": outcome.compatibility.level.value,
+                "minimum_driver": outcome.compatibility.minimum_driver,
+                "reason": outcome.compatibility.reason,
+            }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -242,6 +268,8 @@ def _result_document(
             "requirements": list(options.requirement_overrides),
             "backend": (options.backend.concrete_value or options.backend.kind.value),
             "channel": options.channel.value,
+            "cuda_compatibility": options.cuda_compatibility.value,
+            "probe_profile": options.probe_profile.value,
             "extras": list(options.extras),
             "groups": list(options.groups),
             "cuda_device": options.cuda_device.value if options.cuda_device else None,
@@ -250,8 +278,10 @@ def _result_document(
         "candidate_attempts": [
             {
                 "backend": attempt.backend,
-                "passed": attempt.passed,
-                "detail": redact(attempt.detail),
+                "stage": attempt.stage,
+                "status": attempt.status,
+                "reason": redact(attempt.reason),
+                "compatibility": attempt.compatibility,
             }
             for attempt in outcome.attempts
         ],

@@ -15,6 +15,10 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from uv_torch_compass.cuda_compatibility import (
+    CompatibilityDecision,
+    CompatibilityPolicy,
+)
 from uv_torch_compass.errors import ConfigurationError, ProbeError
 
 _CUDA_BACKEND_PATTERN = re.compile(r"cu[0-9]{2,3}", re.ASCII)
@@ -42,6 +46,13 @@ class OutputFormat(str, Enum):
 
     TEXT = "text"
     JSON = "json"
+
+
+class ProbeProfile(str, Enum):
+    """Select standard runtime checks or optional compiler validation."""
+
+    STANDARD = "standard"
+    COMPILE = "compile"
 
 
 class BackendKind(str, Enum):
@@ -291,6 +302,8 @@ class RunOptions:
     requirement_overrides: tuple[str, ...]
     backend: BackendRequest
     channel: Channel
+    cuda_compatibility: CompatibilityPolicy
+    probe_profile: ProbeProfile
     extras: tuple[str, ...]
     groups: tuple[str, ...]
     cuda_device: GpuDevice | None
@@ -425,8 +438,10 @@ class CandidateAttempt:
     """Record one backend candidate result without retaining secret command data."""
 
     backend: str
-    passed: bool
-    detail: str
+    stage: str
+    status: str
+    reason: str
+    compatibility: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +451,7 @@ class CommandOutcome:
     status: str
     applied: bool
     runtime: RuntimeReport | None
+    compatibility: CompatibilityDecision | None = None
     attempts: tuple[CandidateAttempt, ...] = ()
     changes: tuple[str, ...] = ()
     backups: tuple[Path, ...] = ()

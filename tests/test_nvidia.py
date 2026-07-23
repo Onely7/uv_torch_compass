@@ -3,6 +3,10 @@ from pathlib import Path
 import pytest
 
 from uv_torch_compass.command_runner import CommandResult
+from uv_torch_compass.cuda_compatibility import (
+    CompatibilityLevel,
+    CompatibilityPolicy,
+)
 from uv_torch_compass.errors import CommandError, ConfigurationError
 from uv_torch_compass.nvidia import NvidiaInspector, re_search_cuda
 
@@ -24,7 +28,8 @@ class FakeRunner:
         if "--query-gpu=index,uuid,name,driver_version" in arguments:
             return CommandResult(
                 self.query_code,
-                "0, GPU-AAA, First GPU, 570.1\n1, GPU-BBB, Second GPU, 570.1\n",
+                "0, GPU-AAA, First GPU, 570.124.06\n"
+                "1, GPU-BBB, Second GPU, 570.124.06\n",
                 "query failed" if self.query_code else "",
             )
         return CommandResult(
@@ -41,8 +46,14 @@ def test_inspector_selects_index_or_uuid_and_filters_cuda() -> None:
 
     assert by_index.selected.name == "Second GPU"
     assert by_uuid.selected.index == "0"
-    assert by_uuid.supports_backend("cu128")
-    assert not by_uuid.supports_backend("cu130")
+    assert (
+        by_uuid.compatibility_for("cu128", CompatibilityPolicy.STRICT).level
+        is CompatibilityLevel.STRICT
+    )
+    assert (
+        by_uuid.compatibility_for("cu130", CompatibilityPolicy.STRICT).level
+        is CompatibilityLevel.UNSUPPORTED
+    )
 
 
 def test_inspector_rejects_missing_device_and_failed_commands() -> None:

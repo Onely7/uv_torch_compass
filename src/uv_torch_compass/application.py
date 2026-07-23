@@ -12,6 +12,10 @@ from pathlib import Path
 from uv_torch_compass.backend_selection import build_candidate_plan
 from uv_torch_compass.candidate_probe import CandidateProbeService, ProbeOutcome
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
+from uv_torch_compass.cuda_compatibility import (
+    CompatibilityDecision,
+    CompatibilityLevel,
+)
 from uv_torch_compass.domain import (
     BackendKind,
     CommandOutcome,
@@ -162,6 +166,7 @@ class CompassApplication:
             channel=self.options.channel,
             advertised_backends=advertised,
             nvidia=nvidia,
+            compatibility_policy=self.options.cuda_compatibility,
         )
         for warning in candidate_plan.warnings:
             self.reporter.warn(warning)
@@ -178,8 +183,14 @@ class CompassApplication:
                 requirements=requirements,
                 runtime_probe=Path(__file__).with_name("runtime_probe.py").resolve(),
                 cuda_device=gpu_selector,
+                nvidia=nvidia,
+                compatibility_policy=self.options.cuda_compatibility,
+                probe_profile=self.options.probe_profile,
             )
-            verified = probe.find_working_candidate(candidate_plan.candidates)
+            verified = probe.find_working_candidate(
+                candidate_plan.candidates,
+                prior_attempts=candidate_plan.skipped,
+            )
 
         initial_state.require_unchanged(self.options.operation)
         try:
@@ -204,6 +215,7 @@ class CompassApplication:
                 status="planned",
                 applied=False,
                 runtime=verified.runtime,
+                compatibility=verified.compatibility,
                 attempts=verified.attempts,
                 changes=changes,
                 warnings=warnings,
@@ -221,6 +233,7 @@ class CompassApplication:
             gpu_selector,
             warnings,
             metadata,
+            nvidia,
         )
 
     def _apply(
@@ -235,6 +248,7 @@ class CompassApplication:
         gpu_selector: str | None,
         warnings: tuple[str, ...],
         metadata: dict[str, object],
+        nvidia: NvidiaSnapshot | None,
     ) -> CommandOutcome:
         self.reporter.phase("apply", "updating and synchronizing the target project")
         lock_path = workspace.workspace_root / ".uv-torch-compass.lock"
@@ -271,6 +285,7 @@ class CompassApplication:
                     verified.runtime.backend,
                     gpu_selector,
                 )
+                final_compatibility = self._compatibility_for(final, nvidia)
             except BaseException as exc:
                 if transaction is not None:
                     self._restore(workspace, python, transaction, exc)
@@ -282,6 +297,7 @@ class CompassApplication:
             status=status,
             applied=True,
             runtime=final,
+            compatibility=final_compatibility,
             attempts=verified.attempts,
             changes=changes,
             backups=transaction.backups if transaction is not None else (),
@@ -309,6 +325,9 @@ class CompassApplication:
         for warning in gpu_warnings:
             self.reporter.warn(warning)
         gpu_selector = nvidia.selected.uuid if nvidia is not None else None
+        compatibility = self._compatibility_for_candidate(configured, nvidia)
+        if compatibility.level is CompatibilityLevel.MINOR:
+            self.reporter.warn(compatibility.reason)
         _require_success(
             self.uv.check_lock(workspace.project_dir),
             "uv lock is missing or stale",
@@ -334,6 +353,7 @@ class CompassApplication:
             status="valid",
             applied=False,
             runtime=runtime,
+            compatibility=compatibility,
             warnings=gpu_warnings,
             metadata=_metadata(python, nvidia),
         )
@@ -401,6 +421,29 @@ class CompassApplication:
                 f"{expected_backend.value}"
             )
         return report
+
+    def _compatibility_for(
+        self, runtime: RuntimeReport, nvidia: NvidiaSnapshot | None
+    ) -> CompatibilityDecision:
+        return self._compatibility_for_candidate(runtime.backend, nvidia)
+
+    def _compatibility_for_candidate(
+        self, backend, nvidia: NvidiaSnapshot | None
+    ) -> CompatibilityDecision:
+        if not backend.is_cuda:
+            return CompatibilityDecision(
+                CompatibilityLevel.STRICT,
+                "",
+                "CPU backend does not require an NVIDIA CUDA driver",
+            )
+        if nvidia is None:
+            raise CommandError("CUDA backend requires a visible NVIDIA GPU")
+        decision = nvidia.compatibility_for(
+            backend.value, self.options.cuda_compatibility
+        )
+        if not decision.allowed:
+            raise CommandError(decision.reason)
+        return decision
 
     def _restore(
         self,

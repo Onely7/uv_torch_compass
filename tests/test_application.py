@@ -8,12 +8,14 @@ import pytest
 
 from uv_torch_compass.application import CompassApplication, _requested_cuda_device
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
+from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendRequest,
     Channel,
     GpuDevice,
     Operation,
     OutputFormat,
+    ProbeProfile,
     RunOptions,
 )
 from uv_torch_compass.errors import CommandError, ExternalModificationError
@@ -200,6 +202,8 @@ def _options(pyproject: Path, operation: Operation) -> RunOptions:
         requirement_overrides=(),
         backend=BackendRequest.parse("cpu"),
         channel=Channel.STABLE,
+        cuda_compatibility=CompatibilityPolicy.STRICT,
+        probe_profile=ProbeProfile.STANDARD,
         extras=(),
         groups=(),
         cuda_device=cast(GpuDevice | None, None),

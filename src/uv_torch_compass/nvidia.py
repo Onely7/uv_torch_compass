@@ -9,7 +9,9 @@ from pathlib import Path
 
 from uv_torch_compass.command_runner import ProcessRunner
 from uv_torch_compass.cuda_compatibility import (
-    backend_within_reported_cuda_maximum,
+    CompatibilityDecision,
+    CompatibilityPolicy,
+    decide_compatibility,
 )
 from uv_torch_compass.errors import CommandError, ConfigurationError
 
@@ -42,9 +44,16 @@ class NvidiaSnapshot:
     driver_cuda_max: str
     selected: NvidiaDevice
 
-    def supports_backend(self, backend: str) -> bool:
-        """Return whether the driver's advertised CUDA maximum includes a backend."""
-        return backend_within_reported_cuda_maximum(backend, self.driver_cuda_max)
+    def compatibility_for(
+        self, backend: str, policy: CompatibilityPolicy
+    ) -> CompatibilityDecision:
+        """Classify a backend against the selected GPU's driver."""
+        return decide_compatibility(
+            backend,
+            driver_version=self.selected.driver_version,
+            reported_cuda_maximum=self.driver_cuda_max,
+            policy=policy,
+        )
 
 
 @dataclass(frozen=True, slots=True)

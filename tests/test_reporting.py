@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendCandidate,
     BackendRequest,
@@ -11,6 +12,7 @@ from uv_torch_compass.domain import (
     CommandOutcome,
     Operation,
     OutputFormat,
+    ProbeProfile,
     RunOptions,
     RuntimeReport,
 )
@@ -44,6 +46,8 @@ def test_json_report_is_single_document_and_private(tmp_path: Path, capsys) -> N
         requirement_overrides=(),
         backend=BackendRequest.parse("cpu"),
         channel=Channel.STABLE,
+        cuda_compatibility=CompatibilityPolicy.STRICT,
+        probe_profile=ProbeProfile.STANDARD,
         extras=(),
         groups=(),
         cuda_device=None,
@@ -83,6 +87,8 @@ def _text_options(tmp_path: Path, report_file: Path | None = None) -> RunOptions
         requirement_overrides=(),
         backend=BackendRequest.parse("cpu"),
         channel=Channel.STABLE,
+        cuda_compatibility=CompatibilityPolicy.STRICT,
+        probe_profile=ProbeProfile.STANDARD,
         extras=("vision",),
         groups=("training",),
         cuda_device=None,

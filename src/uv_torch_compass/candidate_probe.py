@@ -8,13 +8,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
+from uv_torch_compass.cuda_compatibility import (
+    CompatibilityDecision,
+    CompatibilityLevel,
+    CompatibilityPolicy,
+)
 from uv_torch_compass.domain import (
     BackendCandidate,
     CandidateAttempt,
+    ProbeProfile,
     ProjectRequirements,
     RuntimeReport,
 )
 from uv_torch_compass.errors import CommandError, ProbeError
+from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.uv_commands import UvCommandClient
 
@@ -24,6 +31,7 @@ class ProbeOutcome:
     """Contain the first verified runtime and any required NumPy repair."""
 
     runtime: RuntimeReport
+    compatibility: CompatibilityDecision
     numpy_lt2_required: bool
     attempts: tuple[CandidateAttempt, ...]
 
@@ -40,30 +48,51 @@ class CandidateProbeService:
     requirements: ProjectRequirements
     runtime_probe: Path
     cuda_device: str | None
+    nvidia: NvidiaSnapshot | None
+    compatibility_policy: CompatibilityPolicy
+    probe_profile: ProbeProfile
 
     def find_working_candidate(
-        self, candidates: tuple[BackendCandidate, ...]
+        self,
+        candidates: tuple[BackendCandidate, ...],
+        *,
+        prior_attempts: tuple[CandidateAttempt, ...] = (),
     ) -> ProbeOutcome:
         """Return the first verified candidate.
 
         Raises:
             CommandError: If every candidate fails installation or runtime checks.
         """
-        attempts: list[CandidateAttempt] = []
+        attempts = list(prior_attempts)
         for candidate in candidates:
             outcome = self._probe_candidate(candidate)
             if outcome is None:
-                attempts.append(CandidateAttempt(candidate.value, False, "failed"))
+                attempts.append(
+                    CandidateAttempt(
+                        candidate.value,
+                        "runtime",
+                        "failed",
+                        "candidate installation or runtime validation failed",
+                        self._compatibility_for(candidate).level.value,
+                    )
+                )
                 continue
             attempts.append(
                 CandidateAttempt(
                     candidate.value,
-                    True,
+                    "runtime",
+                    "passed",
                     f"resolved as {outcome.runtime.backend.value}",
+                    outcome.compatibility.level.value,
                 )
             )
+            if outcome.compatibility.level is CompatibilityLevel.MINOR:
+                self.reporter.warn(outcome.compatibility.reason)
             return ProbeOutcome(
-                outcome.runtime, outcome.numpy_lt2_required, tuple(attempts)
+                outcome.runtime,
+                outcome.compatibility,
+                outcome.numpy_lt2_required,
+                tuple(attempts),
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CommandError(
@@ -151,4 +180,23 @@ class CandidateProbeService:
                 f"candidate {candidate.value}: runtime reported {report.backend.value}"
             )
             return None
-        return ProbeOutcome(report, numpy_lt2_required, ())
+        compatibility = self._compatibility_for(report.backend)
+        if not compatibility.allowed:
+            self.reporter.warn(f"candidate {candidate.value}: {compatibility.reason}")
+            return None
+        return ProbeOutcome(report, compatibility, numpy_lt2_required, ())
+
+    def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:
+        if not candidate.is_cuda:
+            return CompatibilityDecision(
+                CompatibilityLevel.STRICT,
+                "",
+                "CPU backend does not require an NVIDIA CUDA driver",
+            )
+        if self.nvidia is None:
+            return CompatibilityDecision(
+                CompatibilityLevel.UNSUPPORTED,
+                "",
+                "CUDA backend requires a visible NVIDIA GPU",
+            )
+        return self.nvidia.compatibility_for(candidate.value, self.compatibility_policy)

@@ -15,12 +15,14 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised by Python 3.10 CI.
     import tomli as tomllib  # ty: ignore[unresolved-import]
 
+from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendRequest,
     Channel,
     GpuDevice,
     Operation,
     OutputFormat,
+    ProbeProfile,
     RunOptions,
 )
 from uv_torch_compass.errors import ConfigurationError
@@ -32,6 +34,8 @@ _TOOL_KEYS = {
     "extras",
     "groups",
     "cuda-device",
+    "cuda-compatibility",
+    "probe-profile",
     "link-mode",
     "log-dir",
     "timeout",
@@ -39,7 +43,9 @@ _TOOL_KEYS = {
 }
 _LINK_MODES = {"clone", "copy", "hardlink", "symlink"}
 _ENV_PREFIX = "UV_TORCH_COMPASS_"
-_EnumSetting = TypeVar("_EnumSetting", Channel, OutputFormat)
+_EnumSetting = TypeVar(
+    "_EnumSetting", Channel, OutputFormat, ProbeProfile, CompatibilityPolicy
+)
 
 
 def resolve_options(
@@ -100,6 +106,22 @@ def resolve_options(
         environ.get(f"{_ENV_PREFIX}CHANNEL"),
         project_settings,
         default="stable",
+    )
+    cuda_compatibility = _enum_setting(
+        CompatibilityPolicy,
+        "cuda-compatibility",
+        getattr(namespace, "cuda_compatibility", None),
+        environ.get(f"{_ENV_PREFIX}CUDA_COMPATIBILITY"),
+        project_settings,
+        default="strict",
+    )
+    probe_profile = _enum_setting(
+        ProbeProfile,
+        "probe-profile",
+        getattr(namespace, "probe_profile", None),
+        environ.get(f"{_ENV_PREFIX}PROBE_PROFILE"),
+        project_settings,
+        default="standard",
     )
     output_format = _enum_setting(
         OutputFormat,
@@ -198,6 +220,8 @@ def resolve_options(
         requirement_overrides=overrides,
         backend=backend,
         channel=channel,
+        cuda_compatibility=cuda_compatibility,
+        probe_profile=probe_profile,
         extras=extras,
         groups=groups,
         cuda_device=GpuDevice(cuda_device_text) if cuda_device_text else None,
