@@ -81,7 +81,7 @@ version を決める変更には、次の commit prefix を使います。
 
 ほかの認識可能な commit も changelog へ入る場合がありますが、必ず新しい release を要求するわけではありません。通常の PR は Conventional Commit 形式の title で squash merge し、`main` 上の一変更を明確な一 commit にする運用を推奨します。
 
-Release PR を merge すると、`vX.Y.Z` tag と公開済み GitHub Release を作ります。分離した公開 workflow がその tag を build し、Trusted Publishing で upload する前に `pypi` Environment の承認を待ちます。外部設定と TestPyPI の経路は[公開](publishing_ja.md)を参照してください。
+Release PR を merge すると、`vX.Y.Z` tag と公開済み GitHub Release を作ります。分離した公開 workflow がその tag を build し、Trusted Publishing で upload する前に `pypi` Environment の承認を待ちます。
 
 workflow は組み込みの `GITHUB_TOKEN` だけでも動作します。ただし、この token が作った tag や release から別の workflow は起動しません。PyPI workflow を追加する前に、Contents・Pull requests・Issues の書き込み権限を持つ、対象 repository 限定の GitHub App token または fine-grained personal access token を `RELEASE_PLEASE_TOKEN` という repository secret へ登録してください。登録後は既存 workflow がその secret を優先します。
 

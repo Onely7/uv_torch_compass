@@ -91,6 +91,5 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 | text・JSON の結果を利用する | [report と自動化](https://github.com/Onely7/uv_torch_compass/blob/main/docs/reports_ja.md) |
 | ファイルを復旧し、失敗を調べる | [復旧とトラブル対応](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery_ja.md) |
 | テスト、build、artifact 準備を行う | [開発](https://github.com/Onely7/uv_torch_compass/blob/main/docs/development_ja.md) |
-| 検証済みの配布 package を公開する | [公開](https://github.com/Onely7/uv_torch_compass/blob/main/docs/publishing_ja.md) |
 
 文書全体は[ドキュメント一覧](https://github.com/Onely7/uv_torch_compass/blob/main/docs/README_ja.md)から確認できます。

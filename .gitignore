@@ -16,6 +16,7 @@ wheels/
 
 # OS and tool state
 .DS_Store
+_docs/
 .uv-torch-compass/
 .uv-torch-compass.lock
 pyproject.toml.bak.*

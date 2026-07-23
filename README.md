@@ -91,6 +91,5 @@ Review `git diff` after `plan` and `apply`. Backups remain after success; [recov
 | Consume text and JSON results | [Reports and automation](https://github.com/Onely7/uv_torch_compass/blob/main/docs/reports.md) |
 | Recover files or diagnose a failure | [Recovery and troubleshooting](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery.md) |
 | Test, build, and prepare artifacts | [Development](https://github.com/Onely7/uv_torch_compass/blob/main/docs/development.md) |
-| Publish verified distributions | [Publishing](https://github.com/Onely7/uv_torch_compass/blob/main/docs/publishing.md) |
 
 See the [documentation index](https://github.com/Onely7/uv_torch_compass/blob/main/docs/README.md) for the complete map.

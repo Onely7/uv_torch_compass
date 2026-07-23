@@ -13,6 +13,5 @@
 | text 出力、JSON、report file、終了コードを使う | [report と自動化](reports_ja.md) |
 | バックアップ、rollback、ログ、主な失敗を確認する | [復旧とトラブル対応](recovery_ja.md) |
 | 検査、配布 package の build、公開準備 artifact を作る | [開発](development_ja.md) |
-| 検証済みの配布 package を TestPyPI・PyPI へ公開する | [公開](publishing_ja.md) |
 
 バージョン 0.1.0 で公開インターフェースとして扱うのは CLI です。`uv_torch_compass` 以下の Python module は内部実装であり、予告なく変更する場合があります。

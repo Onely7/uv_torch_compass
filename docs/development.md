@@ -81,7 +81,7 @@ Use these commit prefixes for changes that should determine a version:
 
 Other recognized commits can appear in the changelog but do not necessarily request a new release. Prefer squash-merging ordinary pull requests with a Conventional Commit title so `main` contains one clear release entry per change.
 
-Merging the Release PR creates the `vX.Y.Z` tag and a published GitHub Release. The separate publishing workflow then builds that tag and waits for approval in the `pypi` Environment before uploading through Trusted Publishing. See [Publishing](publishing.md) for the external configuration and TestPyPI path.
+Merging the Release PR creates the `vX.Y.Z` tag and a published GitHub Release. The separate publishing workflow then builds that tag and waits for approval in the `pypi` Environment before uploading through Trusted Publishing.
 
 The workflow works immediately with the built-in `GITHUB_TOKEN`. GitHub does not start another workflow for a tag or release created with that token. Before adding the separate PyPI workflow, create a repository secret named `RELEASE_PLEASE_TOKEN` containing a repository-scoped GitHub App token or fine-grained personal access token with Contents, Pull requests, and Issues write access. The existing workflow automatically prefers that secret when present.
 
