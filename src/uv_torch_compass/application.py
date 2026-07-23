@@ -425,11 +425,6 @@ class CompassApplication:
             result.stdout, channel=expected_backend.channel
         )
         report.validate_requirements(requirements)
-        if report.probe_profile != self.options.probe_profile.value:
-            raise CommandError(
-                f"final runtime reported profile {report.probe_profile!r}, expected "
-                f"{self.options.probe_profile.value!r}"
-            )
         if report.backend.value != expected_backend.value:
             raise CommandError(
                 f"final runtime reported {report.backend.value}, expected "
@@ -444,6 +439,13 @@ class CompassApplication:
                 )
             except ConfigurationError as exc:
                 raise CommandError(str(exc)) from exc
+        report.validate_probe_results(
+            requirements,
+            expected_profile=self.options.probe_profile,
+            require_native_architecture=(
+                compatibility.level is CompatibilityLevel.MINOR
+            ),
+        )
         return report
 
     def _compatibility_for(

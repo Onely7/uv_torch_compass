@@ -462,6 +462,86 @@ class RuntimeReport:
                         f"{package} {version} does not satisfy {requirement.specifier}"
                     )
 
+    def validate_probe_results(
+        self,
+        requirements: ProjectRequirements,
+        *,
+        expected_profile: ProbeProfile,
+        require_native_architecture: bool,
+    ) -> None:
+        """Confirm every reported check has the result required by this run.
+
+        Raises:
+            ProbeError: If the probe profile, device identity, or a check result
+                does not match the requested validation.
+        """
+        if self.probe_profile != expected_profile.value:
+            raise ProbeError(
+                f"runtime probe reported profile {self.probe_profile!r}, expected "
+                f"{expected_profile.value!r}"
+            )
+        expected = {
+            "numpy_bridge_test": "PASS",
+            "torchvision_test": (
+                "PASS" if requirements.has_package("torchvision") else "NOT_REQUESTED"
+            ),
+            "torchaudio_test": (
+                "PASS" if requirements.has_package("torchaudio") else "NOT_REQUESTED"
+            ),
+            "compile_test": (
+                "PASS" if expected_profile is ProbeProfile.COMPILE else "NOT_REQUESTED"
+            ),
+        }
+        if self.backend.is_cuda:
+            expected.update(
+                cuda_test="PASS",
+                cublas_test="PASS",
+                cudnn_test="PASS",
+            )
+            if self.gpu_name == "none" or not re.fullmatch(
+                r"[0-9]+\.[0-9]+", self.gpu_device_capability
+            ):
+                raise ProbeError("runtime probe returned invalid CUDA device details")
+            if not self.compiled_architectures:
+                raise ProbeError(
+                    "runtime probe returned no compiled CUDA architectures"
+                )
+            allowed_native = (
+                {"PASS"}
+                if require_native_architecture
+                else {
+                    "PASS",
+                    "PTX_ONLY",
+                }
+            )
+            if self.native_architecture_test not in allowed_native:
+                raise ProbeError(
+                    "runtime probe did not verify the required native architecture"
+                )
+        else:
+            expected.update(
+                cuda_test="NOT_APPLICABLE",
+                cublas_test="NOT_APPLICABLE",
+                cudnn_test="NOT_APPLICABLE",
+                native_architecture_test="NOT_APPLICABLE",
+            )
+            if (
+                self.cuda_runtime != "none"
+                or self.runtime_component_version != "not-installed"
+                or self.gpu_name != "none"
+                or self.gpu_device_capability != "none"
+                or self.compiled_architectures
+            ):
+                raise ProbeError("CPU probe reported unexpected CUDA runtime details")
+
+        for field_name, expected_value in expected.items():
+            actual = getattr(self, field_name)
+            if actual != expected_value:
+                raise ProbeError(
+                    f"runtime probe returned {field_name}={actual!r}, expected "
+                    f"{expected_value!r}"
+                )
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateAttempt:

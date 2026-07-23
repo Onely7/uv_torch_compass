@@ -179,10 +179,6 @@ class CandidateProbeService:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
             report.validate_requirements(self.requirements)
-            if report.probe_profile != self.probe_profile.value:
-                raise ProbeError(
-                    f"runtime probe reported profile {report.probe_profile!r}"
-                )
             if report.backend.is_cuda:
                 validate_runtime_identity(
                     report.backend.value,
@@ -200,6 +196,17 @@ class CandidateProbeService:
         compatibility = self._compatibility_for(report.backend)
         if not compatibility.allowed:
             self.reporter.warn(f"candidate {candidate.value}: {compatibility.reason}")
+            return None
+        try:
+            report.validate_probe_results(
+                self.requirements,
+                expected_profile=self.probe_profile,
+                require_native_architecture=(
+                    compatibility.level is CompatibilityLevel.MINOR
+                ),
+            )
+        except ProbeError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return None
         return ProbeOutcome(report, compatibility, numpy_lt2_required, ())
 

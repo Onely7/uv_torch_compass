@@ -7,6 +7,7 @@ from uv_torch_compass.domain import (
     BackendKind,
     BackendRequest,
     Channel,
+    ProbeProfile,
     ProjectRequirements,
     RuntimeReport,
     Scope,
@@ -78,6 +79,11 @@ def test_runtime_report_validates_schema_and_requirement_versions() -> None:
     )
 
     report.validate_requirements(requirements)
+    report.validate_probe_results(
+        requirements,
+        expected_profile=ProbeProfile.STANDARD,
+        require_native_architecture=False,
+    )
     assert report.backend.value == "cpu"
 
 
@@ -112,6 +118,45 @@ def test_runtime_report_rejects_invalid_compiled_architectures() -> None:
 
     with pytest.raises(ProbeError, match="compiled_architectures"):
         RuntimeReport.from_output(json.dumps(invalid))
+
+
+def test_runtime_report_rejects_spoofed_validation_result() -> None:
+    report = RuntimeReport(
+        2,
+        BackendCandidate("cu128"),
+        "2.7.0",
+        "not-installed",
+        "not-installed",
+        "2.2.0",
+        "12.8",
+        "Fake GPU",
+        "PASS",
+        "PASS",
+        "NOT_REQUESTED",
+        "NOT_REQUESTED",
+        "12.8.90",
+        "8.9",
+        ("sm_89",),
+        "PASS",
+        "FAIL",
+        "PASS",
+        "NOT_REQUESTED",
+        "standard",
+    )
+    requirements = ProjectRequirements(
+        ">=3.10",
+        "",
+        (ScopedRequirement(Scope("base"), "torch>=2.6"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(ProbeError, match="cublas_test"):
+        report.validate_probe_results(
+            requirements,
+            expected_profile=ProbeProfile.STANDARD,
+            require_native_architecture=False,
+        )
 
 
 @pytest.mark.parametrize(
