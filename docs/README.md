@@ -13,5 +13,6 @@ Start with the root README. Use this index when you need details; the guides do 
 | Use text output, JSON, report files, and exit codes | [Reports and automation](reports.md) |
 | Understand backups, rollback, logs, and common failures | [Recovery and troubleshooting](recovery.md) |
 | Run checks, build distributions, and generate publication artifacts | [Development](development.md) |
+| Publish verified distributions to TestPyPI and PyPI | [Publishing](publishing.md) |
 
 The CLI is the public interface for version 0.1.0. Python modules under `uv_torch_compass` are internal and may change without notice.

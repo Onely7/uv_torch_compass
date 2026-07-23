@@ -88,5 +88,6 @@ Review `git diff` after `plan` and `apply`. Backups remain after success; [recov
 | Consume text and JSON results | [Reports and automation](docs/reports.md) |
 | Recover files or diagnose a failure | [Recovery and troubleshooting](docs/recovery.md) |
 | Test, build, and prepare artifacts | [Development](docs/development.md) |
+| Publish verified distributions | [Publishing](docs/publishing.md) |
 
 See the [documentation index](docs/README.md) for the complete map.

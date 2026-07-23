@@ -61,6 +61,7 @@ uvx --refresh --isolated \
 | `CodeQL` | 最小権限で Python と Actions を `security-extended` 解析する |
 | `Real PyTorch CPU smoke test` | 一時対象 project へ実 CPU build を install し、手動で検証する |
 | `Build publication artifacts` | 公開せず、build・smoke test・準備 artifact の upload を手動実行する |
+| `Publish Python package` | Trusted Publishing により、手動 build を TestPyPI へ、公開済み GitHub Release を PyPI へ公開する |
 | `Release Please` | Release PR を更新し、人が merge したときに version tag と GitHub Release を作る |
 | Dependabot | uv、GitHub Actions、pre-commit の依存を別 group で週次確認する |
 
@@ -80,7 +81,7 @@ version を決める変更には、次の commit prefix を使います。
 
 ほかの認識可能な commit も changelog へ入る場合がありますが、必ず新しい release を要求するわけではありません。通常の PR は Conventional Commit 形式の title で squash merge し、`main` 上の一変更を明確な一 commit にする運用を推奨します。
 
-Release PR を merge すると、`vX.Y.Z` tag と公開済み GitHub Release を作ります。PyPI への公開は行いません。将来の PyPI workflow は分離し、GitHub Release の公開時だけ実行する構成にしてください。
+Release PR を merge すると、`vX.Y.Z` tag と公開済み GitHub Release を作ります。分離した公開 workflow がその tag を build し、Trusted Publishing で upload する前に `pypi` Environment の承認を待ちます。外部設定と TestPyPI の経路は[公開](publishing_ja.md)を参照してください。
 
 workflow は組み込みの `GITHUB_TOKEN` だけでも動作します。ただし、この token が作った tag や release から別の workflow は起動しません。PyPI workflow を追加する前に、Contents・Pull requests・Issues の書き込み権限を持つ、対象 repository 限定の GitHub App token または fine-grained personal access token を `RELEASE_PLEASE_TOKEN` という repository secret へ登録してください。登録後は既存 workflow がその secret を優先します。
 
@@ -94,9 +95,9 @@ workflow は組み込みの `GITHUB_TOKEN` だけでも動作します。ただ�
 - commit、Python、uv、smoke test 結果を持つ JSON provenance manifest
 - text の smoke test 出力
 
-有限の保持期間を持つ GitHub Actions artifact としてだけ upload します。この手動 workflow は tag、GitHub Release、PyPI upload、`id-token` 要求、Trusted Publishing、公開用 credentials を追加しません。tag と GitHub Release の作成は Release Please が担当します。
+有限の保持期間を持つ GitHub Actions artifact としてだけ upload します。この手動 workflow は tag、GitHub Release、PyPI upload、`id-token` 要求、公開用 credentials を追加しません。tag と GitHub Release の作成は Release Please、package upload は分離した公開 workflow が担当します。
 
-将来の PyPI 公開前には、残っている著者・repository の package metadata を追加し、package 名を確認し、この workflow とは別に publishing を設定して wheel 検証を繰り返します。それらが終わるまで、`uvx uv-torch-compass` を利用可能な command として案内しません。
+最初の PyPI 公開前に、二つの Trusted Publisher を設定し、package 名を確認して、TestPyPI で workflow を検証します。PyPI への公開が成功するまで、`uvx uv-torch-compass` を利用可能な command として案内しません。
 
 ## security boundary
 
