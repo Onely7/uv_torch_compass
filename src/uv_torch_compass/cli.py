@@ -136,6 +136,8 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--extra", dest="extras", action="append", metavar="NAME")
     parser.add_argument("--group", dest="groups", action="append", metavar="NAME")
     parser.add_argument("--cuda-device", metavar="INDEX_OR_UUID")
+    parser.add_argument("--cuda-compatibility", choices=("strict", "minor"))
+    parser.add_argument("--probe-profile", choices=("standard", "compile"))
     parser.add_argument("--log-dir", metavar="PATH")
     parser.add_argument("--timeout", type=int, metavar="SECONDS")
     parser.add_argument("--output-format", choices=("text", "json"))
@@ -159,7 +161,7 @@ def _add_selection_options(parser: argparse.ArgumentParser) -> None:
 def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
     if getattr(namespace, "output_format", None) == "json":
         document = {
-            "schema_version": 1,
+            "schema_version": 2,
             "operation": getattr(namespace, "operation", ""),
             "status": "failed",
             "exit_code": 1,

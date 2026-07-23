@@ -8,41 +8,23 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
+from uv_torch_compass.cuda_compatibility import (
+    CompatibilityDecision,
+    CompatibilityLevel,
+    CompatibilityPolicy,
+    validate_runtime_identity,
+)
 from uv_torch_compass.domain import (
     BackendCandidate,
-    BackendKind,
-    BackendRequest,
     CandidateAttempt,
-    Channel,
+    ProbeProfile,
     ProjectRequirements,
     RuntimeReport,
 )
-from uv_torch_compass.errors import CommandError, ProbeError
+from uv_torch_compass.errors import CommandError, ConfigurationError, ProbeError
 from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.uv_commands import UvCommandClient
-
-_CURATED_CUDA_BACKENDS = (
-    "cu130",
-    "cu129",
-    "cu128",
-    "cu126",
-    "cu125",
-    "cu124",
-    "cu123",
-    "cu122",
-    "cu121",
-    "cu120",
-    "cu118",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class CandidatePlan:
-    """Contain ordered candidates and non-fatal discovery diagnostics."""
-
-    candidates: tuple[BackendCandidate, ...]
-    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,71 +32,9 @@ class ProbeOutcome:
     """Contain the first verified runtime and any required NumPy repair."""
 
     runtime: RuntimeReport
+    compatibility: CompatibilityDecision
     numpy_lt2_required: bool
     attempts: tuple[CandidateAttempt, ...]
-
-
-def build_candidate_plan(
-    request: BackendRequest,
-    *,
-    channel: Channel,
-    advertised_backends: tuple[str, ...],
-    nvidia: NvidiaSnapshot | None,
-) -> CandidatePlan:
-    """Build a deterministic candidate sequence from policy and host capability.
-
-    Raises:
-        CommandError: If CUDA is required but no usable CUDA candidate exists.
-    """
-    warnings: list[str] = []
-    advertised_cuda = tuple(
-        sorted(
-            (value for value in advertised_backends if value.startswith("cu")),
-            key=_cuda_sort_key,
-            reverse=True,
-        )
-    )
-    if not advertised_cuda:
-        advertised_cuda = _CURATED_CUDA_BACKENDS
-        warnings.append(
-            "uv did not advertise CUDA backends; using the curated fallback list"
-        )
-    compatible_cuda = tuple(
-        value
-        for value in advertised_cuda
-        if nvidia is not None and nvidia.supports_backend(value)
-    )
-
-    if request.kind is BackendKind.CPU:
-        values = ("cpu",)
-    elif request.kind is BackendKind.CONCRETE:
-        if nvidia is None:
-            raise CommandError("a concrete CUDA backend requires a visible NVIDIA GPU")
-        if not nvidia.supports_backend(request.concrete_value):
-            raise CommandError(
-                f"backend {request.concrete_value} exceeds the CUDA version "
-                "supported by the visible NVIDIA driver"
-            )
-        values = (request.concrete_value,)
-    elif request.kind is BackendKind.CUDA:
-        if nvidia is None:
-            raise CommandError("--backend cuda requires a visible NVIDIA GPU")
-        if not compatible_cuda:
-            raise CommandError("no CUDA backend is compatible with the visible driver")
-        values = compatible_cuda
-    elif channel is Channel.NIGHTLY:
-        values = (*compatible_cuda, "cpu") if nvidia is not None else ("cpu",)
-    else:
-        values = (
-            ("auto", *compatible_cuda, "cpu") if nvidia is not None else ("auto", "cpu")
-        )
-
-    candidates = tuple(
-        BackendCandidate(value, channel)
-        for value in dict.fromkeys(values)
-        if not (channel is Channel.NIGHTLY and value == "auto")
-    )
-    return CandidatePlan(candidates, tuple(warnings))
 
 
 @dataclass(slots=True)
@@ -129,30 +49,51 @@ class CandidateProbeService:
     requirements: ProjectRequirements
     runtime_probe: Path
     cuda_device: str | None
+    nvidia: NvidiaSnapshot | None
+    compatibility_policy: CompatibilityPolicy
+    probe_profile: ProbeProfile
 
     def find_working_candidate(
-        self, candidates: tuple[BackendCandidate, ...]
+        self,
+        candidates: tuple[BackendCandidate, ...],
+        *,
+        prior_attempts: tuple[CandidateAttempt, ...] = (),
     ) -> ProbeOutcome:
         """Return the first verified candidate.
 
         Raises:
             CommandError: If every candidate fails installation or runtime checks.
         """
-        attempts: list[CandidateAttempt] = []
+        attempts = list(prior_attempts)
         for candidate in candidates:
             outcome = self._probe_candidate(candidate)
             if outcome is None:
-                attempts.append(CandidateAttempt(candidate.value, False, "failed"))
+                attempts.append(
+                    CandidateAttempt(
+                        candidate.value,
+                        "runtime",
+                        "failed",
+                        "candidate installation or runtime validation failed",
+                        self._compatibility_for(candidate).level.value,
+                    )
+                )
                 continue
             attempts.append(
                 CandidateAttempt(
                     candidate.value,
-                    True,
+                    "runtime",
+                    "passed",
                     f"resolved as {outcome.runtime.backend.value}",
+                    outcome.compatibility.level.value,
                 )
             )
+            if outcome.compatibility.level is CompatibilityLevel.MINOR:
+                self.reporter.warn(outcome.compatibility.reason)
             return ProbeOutcome(
-                outcome.runtime, outcome.numpy_lt2_required, tuple(attempts)
+                outcome.runtime,
+                outcome.compatibility,
+                outcome.numpy_lt2_required,
+                tuple(attempts),
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CommandError(
@@ -207,8 +148,14 @@ class CandidateProbeService:
     def _run_probe(self, venv: Path, candidate: BackendCandidate):
         expected = candidate.value if candidate.is_concrete else None
         arguments: list[str | Path] = [venv / "bin" / "python", self.runtime_probe]
+        arguments.extend(["--probe-profile", self.probe_profile.value])
         if expected:
             arguments.extend(["--expected-backend", expected])
+        if (
+            candidate.is_cuda
+            and self._compatibility_for(candidate).level is CompatibilityLevel.MINOR
+        ):
+            arguments.append("--require-native-architecture")
         if self.requirements.has_package("torchvision"):
             arguments.append("--validate-torchvision")
         if self.requirements.has_package("torchaudio"):
@@ -232,7 +179,13 @@ class CandidateProbeService:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
             report.validate_requirements(self.requirements)
-        except ProbeError as exc:
+            if report.backend.is_cuda:
+                validate_runtime_identity(
+                    report.backend.value,
+                    cuda_runtime=report.cuda_runtime,
+                    runtime_component=report.runtime_component_version,
+                )
+        except (ConfigurationError, ProbeError) as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return None
         if candidate.is_concrete and report.backend.value != candidate.value:
@@ -240,11 +193,34 @@ class CandidateProbeService:
                 f"candidate {candidate.value}: runtime reported {report.backend.value}"
             )
             return None
-        return ProbeOutcome(report, numpy_lt2_required, ())
+        compatibility = self._compatibility_for(report.backend)
+        if not compatibility.allowed:
+            self.reporter.warn(f"candidate {candidate.value}: {compatibility.reason}")
+            return None
+        try:
+            report.validate_probe_results(
+                self.requirements,
+                expected_profile=self.probe_profile,
+                require_native_architecture=(
+                    compatibility.level is CompatibilityLevel.MINOR
+                ),
+            )
+        except ProbeError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return None
+        return ProbeOutcome(report, compatibility, numpy_lt2_required, ())
 
-
-def _cuda_sort_key(value: str) -> int:
-    try:
-        return int(value.removeprefix("cu"))
-    except ValueError:
-        return -1
+    def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:
+        if not candidate.is_cuda:
+            return CompatibilityDecision(
+                CompatibilityLevel.STRICT,
+                "",
+                "CPU backend does not require an NVIDIA CUDA driver",
+            )
+        if self.nvidia is None:
+            return CompatibilityDecision(
+                CompatibilityLevel.UNSUPPORTED,
+                "",
+                "CUDA backend requires a visible NVIDIA GPU",
+            )
+        return self.nvidia.compatibility_for(candidate.value, self.compatibility_policy)

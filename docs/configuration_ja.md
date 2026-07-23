@@ -15,6 +15,8 @@
 python = "3.12"
 backend = "auto"
 channel = "stable"
+cuda-compatibility = "strict"
+probe-profile = "standard"
 extras = ["vision"]
 groups = ["training"]
 cuda-device = "0"
@@ -39,6 +41,8 @@ output-format = "text"
 | `UV_TORCH_COMPASS_TORCHAUDIO` | 基本依存の `torchaudio` 上書き |
 | `UV_TORCH_COMPASS_BACKEND` | `auto`、`cpu`、`cuda`、`cuNNN` |
 | `UV_TORCH_COMPASS_CHANNEL` | `stable` または `nightly` |
+| `UV_TORCH_COMPASS_CUDA_COMPATIBILITY` | `strict`、または明示的に許可する `minor` |
+| `UV_TORCH_COMPASS_PROBE_PROFILE` | `standard` または `compile` |
 | `UV_TORCH_COMPASS_EXTRAS` | comma 区切りの extra |
 | `UV_TORCH_COMPASS_GROUPS` | comma 区切りの依存グループ |
 | `UV_TORCH_COMPASS_CUDA_DEVICE` | NVIDIA index または UUID |
@@ -64,6 +68,8 @@ export UV_TORCH_COMPASS_EXTRAS='vision,audio,vision,'
 | Python | `.python-version`、次に `[project].requires-python` |
 | backend | `auto` |
 | channel | `stable` |
+| CUDA compatibility | `strict` |
+| probe profile | `standard` |
 | extra と group | なし |
 | CUDA device | 現在の CUDA 選択で見える先頭 device。なければ `nvidia-smi` の先頭 device |
 | link mode | `copy` |
@@ -72,6 +78,8 @@ export UV_TORCH_COMPASS_EXTRAS='vision,audio,vision,'
 | 出力 | `text` |
 
 設定可能な timeout は、候補の install、project 検査、runtime probe、lock、sync に使います。uv の version や利用可能な backend 名を読む短い metadata command には、別の 30 秒制限を残します。
+
+`strict` は、選択した driver が通常サポートする範囲より新しい CUDA runtime を拒否します。`minor` は同じ CUDA major 内の制限付き互換性を明示的に許可し、採用時は警告を残します。`standard` は tensor、NumPy、cuBLAS、cuDNN、architecture、選択した関連 package を確認し、`compile` は `torch.compile` も追加します。
 
 ## uv へ渡す環境
 

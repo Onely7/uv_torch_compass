@@ -23,7 +23,7 @@ You can also build a wheel and run that exact artifact:
 ```bash
 cd /path/to/uv_torch_compass
 uv build --no-sources
-uvx --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
+uvx --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
   uv-torch-compass --help
 ```
 
@@ -51,7 +51,7 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass apply \
   --cuda-device GPU-01234567-89ab-cdef-0123-456789abcdef
 ```
 
-Use `--backend cuda` when CPU fallback is not acceptable. Use a concrete value such as `cu128` only when that exact official index is required.
+On a machine with a visible NVIDIA GPU, both `auto` and `cuda` avoid CPU fallback. `auto` uses CPU only when no NVIDIA GPU is visible. Use a concrete value such as `cu128` only when that exact official index is required and permitted by the compatibility policy.
 
 ## `check`: validate the recorded state
 
@@ -74,6 +74,8 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--extra NAME` | Include a project extra; repeat for more than one. |
 | `--group NAME` | Include a dependency group; repeat for more than one. |
 | `--cuda-device INDEX_OR_UUID` | Select a GPU known to `nvidia-smi`. |
+| `--cuda-compatibility strict\|minor` | Require normal driver support, or explicitly allow limited same-major CUDA compatibility; default: `strict`. |
+| `--probe-profile standard\|compile` | Run standard library checks, or also test `torch.compile`; default: `standard`. |
 | `--log-dir PATH` | Store the unique private run log in this directory. |
 | `--timeout SECONDS` | Set the positive timeout for installation, project checks, runtime probes, lock, and sync; default: 1800. |
 | `--output-format text\|json` | Choose human-readable output or one final JSON object. |
@@ -92,6 +94,16 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--link-mode clone\|copy\|hardlink\|symlink` | Select uv's package installation link mode; default: `copy`. |
 
 The three requirement options update base `[project].dependencies` when `apply` succeeds. They are not stored in `[tool.uv-torch-compass]`.
+
+For example, preview minor-version compatibility and the compiler path without changing the target:
+
+```bash
+uv-torch-compass plan \
+  --cuda-compatibility minor \
+  --probe-profile compile
+```
+
+Minor mode is not an automatic fallback. If it selects a runtime newer than the driver's normal support level, the successful result includes a warning.
 
 ## Help and exit codes
 

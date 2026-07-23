@@ -7,6 +7,7 @@ from uv_torch_compass.domain import (
     BackendKind,
     BackendRequest,
     Channel,
+    ProbeProfile,
     ProjectRequirements,
     RuntimeReport,
     Scope,
@@ -46,18 +47,26 @@ def test_nightly_candidate_uses_official_nightly_index() -> None:
 def test_runtime_report_validates_schema_and_requirement_versions() -> None:
     output = json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "backend": "cpu",
             "torch_version": "2.7.0+cpu",
             "torchvision_version": "not-installed",
             "torchaudio_version": "not-installed",
             "numpy_version": "2.2.0",
             "cuda_runtime": "none",
+            "runtime_component_version": "not-installed",
             "gpu_name": "none",
+            "gpu_device_capability": "none",
+            "compiled_architectures": [],
+            "native_architecture_test": "NOT_APPLICABLE",
             "cuda_test": "NOT_APPLICABLE",
+            "cublas_test": "NOT_APPLICABLE",
+            "cudnn_test": "NOT_APPLICABLE",
             "numpy_bridge_test": "PASS",
             "torchvision_test": "NOT_REQUESTED",
             "torchaudio_test": "NOT_REQUESTED",
+            "compile_test": "NOT_REQUESTED",
+            "probe_profile": "standard",
         }
     )
     report = RuntimeReport.from_output(output)
@@ -70,12 +79,84 @@ def test_runtime_report_validates_schema_and_requirement_versions() -> None:
     )
 
     report.validate_requirements(requirements)
+    report.validate_probe_results(
+        requirements,
+        expected_profile=ProbeProfile.STANDARD,
+        require_native_architecture=False,
+    )
     assert report.backend.value == "cpu"
 
 
 def test_runtime_report_rejects_wrong_schema() -> None:
     with pytest.raises(ProbeError, match="schema"):
-        RuntimeReport.from_output('{"schema_version": 2}')
+        RuntimeReport.from_output('{"schema_version": 1}')
+
+
+def test_runtime_report_rejects_invalid_compiled_architectures() -> None:
+    invalid = {
+        "schema_version": 2,
+        "backend": "cpu",
+        "torch_version": "2.7.0",
+        "torchvision_version": "not-installed",
+        "torchaudio_version": "not-installed",
+        "numpy_version": "2.2.0",
+        "cuda_runtime": "none",
+        "runtime_component_version": "not-installed",
+        "gpu_name": "none",
+        "gpu_device_capability": "none",
+        "compiled_architectures": "sm_89",
+        "native_architecture_test": "NOT_APPLICABLE",
+        "cuda_test": "NOT_APPLICABLE",
+        "cublas_test": "NOT_APPLICABLE",
+        "cudnn_test": "NOT_APPLICABLE",
+        "numpy_bridge_test": "PASS",
+        "torchvision_test": "NOT_REQUESTED",
+        "torchaudio_test": "NOT_REQUESTED",
+        "compile_test": "NOT_REQUESTED",
+        "probe_profile": "standard",
+    }
+
+    with pytest.raises(ProbeError, match="compiled_architectures"):
+        RuntimeReport.from_output(json.dumps(invalid))
+
+
+def test_runtime_report_rejects_spoofed_validation_result() -> None:
+    report = RuntimeReport(
+        2,
+        BackendCandidate("cu128"),
+        "2.7.0",
+        "not-installed",
+        "not-installed",
+        "2.2.0",
+        "12.8",
+        "Fake GPU",
+        "PASS",
+        "PASS",
+        "NOT_REQUESTED",
+        "NOT_REQUESTED",
+        "12.8.90",
+        "8.9",
+        ("sm_89",),
+        "PASS",
+        "FAIL",
+        "PASS",
+        "NOT_REQUESTED",
+        "standard",
+    )
+    requirements = ProjectRequirements(
+        ">=3.10",
+        "",
+        (ScopedRequirement(Scope("base"), "torch>=2.6"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(ProbeError, match="cublas_test"):
+        report.validate_probe_results(
+            requirements,
+            expected_profile=ProbeProfile.STANDARD,
+            require_native_architecture=False,
+        )
 
 
 @pytest.mark.parametrize(

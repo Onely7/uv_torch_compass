@@ -23,7 +23,7 @@ wheel を作り、その artifact を直接検証することもできます。
 ```bash
 cd /path/to/uv_torch_compass
 uv build --no-sources
-uvx --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
+uvx --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
   uv-torch-compass --help
 ```
 
@@ -51,7 +51,7 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass apply \
   --cuda-device GPU-01234567-89ab-cdef-0123-456789abcdef
 ```
 
-CPU への fallback を許可しない場合は `--backend cuda` を使います。特定の公式 index だけが必要な場合は、`cu128` のような具体値を指定します。
+NVIDIA GPU が見える環境では、`auto` と `cuda` のどちらも CPU へ fallback しません。`auto` が CPU を使うのは NVIDIA GPU が見えない場合だけです。特定の公式 index だけが必要で、互換性方針でも許可される場合は、`cu128` のような具体値を指定します。
 
 ## `check`: 記録済みの状態を確認する
 
@@ -74,6 +74,8 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--extra NAME` | project extra を追加する。複数指定では繰り返す |
 | `--group NAME` | 依存グループを追加する。複数指定では繰り返す |
 | `--cuda-device INDEX_OR_UUID` | `nvidia-smi` が認識する GPU を選ぶ |
+| `--cuda-compatibility strict\|minor` | 通常の driver 対応を要求するか、同じ CUDA major 内の制限付き互換性を明示的に許可する。初期値は `strict` |
+| `--probe-profile standard\|compile` | 標準の library 検証だけを行うか、`torch.compile` も確認する。初期値は `standard` |
 | `--log-dir PATH` | 重複しない非公開の実行ログを保存する |
 | `--timeout SECONDS` | install、project 検査、runtime probe、lock、sync の正の timeout を指定する。初期値は 1800 秒 |
 | `--output-format text\|json` | 人向け出力、または最後の JSON object 一つを選ぶ |
@@ -92,6 +94,16 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--link-mode clone\|copy\|hardlink\|symlink` | uv の package 配置方法を選ぶ。初期値は `copy` |
 
 三つの依存 option は、`apply` が成功すると基本 `[project].dependencies` を更新します。`[tool.uv-torch-compass]` には保存しません。
+
+たとえば、minor-version compatibility と compiler 経路を、対象 project を変更せず確認できます。
+
+```bash
+uv-torch-compass plan \
+  --cuda-compatibility minor \
+  --probe-profile compile
+```
+
+minor は自動 fallback ではありません。driver の通常サポートより新しい runtime を採用した場合、成功結果にも警告が含まれます。
 
 ## help と終了コード
 

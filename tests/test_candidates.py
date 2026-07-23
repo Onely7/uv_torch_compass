@@ -4,12 +4,15 @@ from typing import cast
 
 import pytest
 
-from uv_torch_compass.candidate_probe import CandidateProbeService, build_candidate_plan
+from uv_torch_compass.backend_selection import build_candidate_plan
+from uv_torch_compass.candidate_probe import CandidateProbeService
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
+from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendCandidate,
     BackendRequest,
     Channel,
+    ProbeProfile,
     ProjectRequirements,
     Scope,
     ScopedRequirement,
@@ -21,34 +24,78 @@ from uv_torch_compass.uv_commands import UvCommandClient
 
 
 def _nvidia(cuda_max: str = "12.8") -> NvidiaSnapshot:
-    device = NvidiaDevice("0", "GPU-123", "Test GPU", "570.1")
+    device = NvidiaDevice("0", "GPU-123", "Test GPU", "570.124.06")
     return NvidiaSnapshot((device,), cuda_max, device)
 
 
-def test_auto_orders_uv_auto_compatible_cuda_and_cpu() -> None:
+def test_auto_orders_strict_concrete_cuda_without_cpu_fallback() -> None:
     plan = build_candidate_plan(
         BackendRequest.parse("auto"),
         channel=Channel.STABLE,
         advertised_backends=("auto", "cpu", "cu130", "cu128", "cu121", "rocm6.2"),
         nvidia=_nvidia(),
+        compatibility_policy=CompatibilityPolicy.STRICT,
     )
 
     assert [candidate.value for candidate in plan.candidates] == [
-        "auto",
         "cu128",
         "cu121",
-        "cpu",
     ]
+    assert plan.skipped[0].backend == "cu130"
 
 
-def test_nightly_auto_uses_concrete_candidates_only() -> None:
+def test_driver_550_selects_cu124_without_installing_newer_backends() -> None:
+    device = NvidiaDevice("0", "GPU-123", "Ada GPU", "550.100")
+    plan = build_candidate_plan(
+        BackendRequest.parse("auto"),
+        channel=Channel.STABLE,
+        advertised_backends=("auto", "cpu", "cu129", "cu128", "cu124", "cu121"),
+        nvidia=NvidiaSnapshot((device,), "12.4", device),
+        compatibility_policy=CompatibilityPolicy.STRICT,
+    )
+
+    assert [candidate.value for candidate in plan.candidates] == ["cu124", "cu121"]
+    assert [attempt.backend for attempt in plan.skipped] == ["cu129", "cu128"]
+
+
+def test_minor_policy_allows_newer_same_family_backend() -> None:
+    device = NvidiaDevice("0", "GPU-123", "Ada GPU", "550.100")
+    plan = build_candidate_plan(
+        BackendRequest.parse("auto"),
+        channel=Channel.STABLE,
+        advertised_backends=("auto", "cpu", "cu129", "cu124"),
+        nvidia=NvidiaSnapshot((device,), "12.4", device),
+        compatibility_policy=CompatibilityPolicy.MINOR,
+    )
+
+    assert [candidate.value for candidate in plan.candidates] == ["cu129", "cu124"]
+
+
+def test_probe_rejects_runtime_without_an_allowed_driver(
+    tmp_path: Path,
+) -> None:
+    """Characterize the legacy gap between uv auto and concrete filtering."""
+    reporter = ProbeReporter()
+    service = _service(
+        tmp_path,
+        ProbeUv(),
+        ProbeRunner([CommandResult(0, _report("cu129"), "")]),
+        reporter,
+    )
+
+    with pytest.raises(CommandError, match="no usable"):
+        service.find_working_candidate((BackendCandidate("auto"),))
+
+
+def test_nightly_auto_uses_strict_concrete_candidates_only() -> None:
     plan = build_candidate_plan(
         BackendRequest.parse("auto"),
         channel=Channel.NIGHTLY,
         advertised_backends=("auto", "cpu", "cu128"),
         nvidia=_nvidia(),
+        compatibility_policy=CompatibilityPolicy.STRICT,
     )
-    assert [candidate.value for candidate in plan.candidates] == ["cu128", "cpu"]
+    assert [candidate.value for candidate in plan.candidates] == ["cu128"]
 
 
 def test_cuda_policy_requires_visible_nvidia() -> None:
@@ -58,6 +105,19 @@ def test_cuda_policy_requires_visible_nvidia() -> None:
             channel=Channel.STABLE,
             advertised_backends=("cpu", "cu128"),
             nvidia=None,
+            compatibility_policy=CompatibilityPolicy.STRICT,
+        )
+
+
+def test_auto_with_visible_gpu_does_not_fall_back_to_cpu() -> None:
+    device = NvidiaDevice("0", "GPU-123", "Old GPU", "520.1")
+    with pytest.raises(CommandError, match="select --backend cpu"):
+        build_candidate_plan(
+            BackendRequest.parse("auto"),
+            channel=Channel.STABLE,
+            advertised_backends=("auto", "cpu", "cu129"),
+            nvidia=NvidiaSnapshot((device,), "11.8", device),
+            compatibility_policy=CompatibilityPolicy.STRICT,
         )
 
 
@@ -67,48 +127,64 @@ def test_candidate_policies_cover_cpu_concrete_and_curated_fallback() -> None:
         channel=Channel.STABLE,
         advertised_backends=(),
         nvidia=None,
+        compatibility_policy=CompatibilityPolicy.STRICT,
     )
     concrete = build_candidate_plan(
         BackendRequest.parse("cu128"),
         channel=Channel.STABLE,
         advertised_backends=("cpu", "cu128"),
         nvidia=_nvidia(),
+        compatibility_policy=CompatibilityPolicy.STRICT,
     )
 
     assert [item.value for item in cpu.candidates] == ["cpu"]
     assert cpu.warnings
     assert [item.value for item in concrete.candidates] == ["cu128"]
-    with pytest.raises(CommandError, match="compatible"):
+    with pytest.raises(CommandError, match="no CUDA backend"):
         build_candidate_plan(
             BackendRequest.parse("cuda"),
             channel=Channel.STABLE,
             advertised_backends=("cu130",),
             nvidia=_nvidia(),
+            compatibility_policy=CompatibilityPolicy.STRICT,
         )
-    with pytest.raises(CommandError, match="exceeds"):
+    with pytest.raises(CommandError, match="not allowed"):
         build_candidate_plan(
             BackendRequest.parse("cu130"),
             channel=Channel.STABLE,
             advertised_backends=("cu130",),
             nvidia=_nvidia(),
+            compatibility_policy=CompatibilityPolicy.STRICT,
         )
 
 
 def _report(backend: str = "cpu") -> str:
     return json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "backend": backend,
             "torch_version": "2.7.0",
             "torchvision_version": "not-installed",
             "torchaudio_version": "not-installed",
             "numpy_version": "1.26.4",
             "cuda_runtime": "none" if backend == "cpu" else "12.8",
+            "runtime_component_version": (
+                "not-installed" if backend == "cpu" else "12.8.90"
+            ),
             "gpu_name": "none" if backend == "cpu" else "Fake GPU",
+            "gpu_device_capability": "none" if backend == "cpu" else "8.9",
+            "compiled_architectures": [] if backend == "cpu" else ["sm_89"],
+            "native_architecture_test": (
+                "NOT_APPLICABLE" if backend == "cpu" else "PASS"
+            ),
             "cuda_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "cublas_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "cudnn_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
             "numpy_bridge_test": "PASS",
             "torchvision_test": "NOT_REQUESTED",
             "torchaudio_test": "NOT_REQUESTED",
+            "compile_test": "NOT_REQUESTED",
+            "probe_profile": "standard",
         }
     )
 
@@ -186,6 +262,9 @@ def _service(
         requirements,
         Path("/probe.py"),
         None,
+        None,
+        CompatibilityPolicy.STRICT,
+        ProbeProfile.STANDARD,
     )
 
 
@@ -206,7 +285,7 @@ def test_probe_retries_numpy_and_records_success(tmp_path: Path) -> None:
     outcome = service.find_working_candidate((BackendCandidate("cpu"),))
 
     assert outcome.numpy_lt2_required
-    assert outcome.attempts[0].passed
+    assert outcome.attempts[0].status == "passed"
     assert "retrying" in reporter.warnings[0]
 
 

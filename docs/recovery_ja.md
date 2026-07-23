@@ -69,14 +69,19 @@ log には phase、マスク済み subprocess 出力、package version、ロー�
 | Linux 専用 command の失敗 | `plan`、`apply`、`check` は Linux で実行する。help/version だけはほかの OS でも動く |
 | 選択 Python に適用できる PyTorch requirement がない | extra・group と PEP 508 の Python・implementation marker を確認する |
 | `nvidia-smi` の失敗または CUDA version 不在 | NVIDIA driver、device の可視性、`CUDA_VISIBLE_DEVICES` を確認する |
-| 利用できる backend がない | 候補の警告、version 条件、network/index、disk 容量、GPU runtime error を確認する |
+| strict compatibility を満たす CUDA backend がない | NVIDIA driver を更新する、PyTorch version 条件を緩める、`--backend cpu` を明示する、または `--cuda-compatibility minor` を許可できるか確認する |
+| 設定済み backend が strict compatibility で許可されない | 記録済み source が driver の通常サポートより新しい可能性がある。`plan` で対応 source を確認する。`check` 自体は変更しない |
+| CUDA runtime component が backend と一致しない | lockfile から同期環境を作り直し、index 設定を確認する。インストール済み CUDA major・minor は `cuNNN` と一致する必要がある |
+| minor で native architecture がない | 選択 GPU 用の native machine code が wheel にない。別 backend を選ぶか、driver 更新後に strict へ戻す |
+| compile probe の失敗 | `--probe-profile standard` で再実行し、通常の CUDA 動作と任意の Inductor／Triton 経路を切り分ける |
+| 利用できる backend がない | 候補の理由、version 条件、network/index、disk 容量、GPU runtime error を確認する |
 | `uv lock` の失敗 | 選択していない scope や別 workspace member を含む uv の resolver 説明を読む |
 | 環境が同期されていない | 意図した `apply` を実行するか、`uv sync --locked --check` の出力を調べる |
 | 最終 runtime 検証の失敗 | 同期後 project で一時候補の結果を再現できていない。rollback の結果を確認する |
 | plan/check 中にファイルが変わった | editor や別の依存更新 process が終わってから再実行する |
 | 別 process が workspace を更新中 | ほかの `apply` が終わるまで待つ。強制的な同時実行のため active lock を消さない |
 
-CPU の動作だけを切り分ける場合は `plan --backend cpu`、CPU fallback なしで GPU を必須にする場合は `plan --backend cuda` を使います。
+CPU の動作だけを切り分ける場合は `plan --backend cpu` を使います。NVIDIA GPU が見える場合、初期値の `auto` と `cuda` はどちらも CPU へ fallback しません。`nvidia-smi` が存在するのに正しく検査できない場合は、CPU 専用と仮定せず、そのエラーを直してから再実行してください。
 
 ## backup を残す期間
 

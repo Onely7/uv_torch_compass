@@ -15,6 +15,10 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from uv_torch_compass.cuda_compatibility import (
+    CompatibilityDecision,
+    CompatibilityPolicy,
+)
 from uv_torch_compass.errors import ConfigurationError, ProbeError
 
 _CUDA_BACKEND_PATTERN = re.compile(r"cu[0-9]{2,3}", re.ASCII)
@@ -42,6 +46,13 @@ class OutputFormat(str, Enum):
 
     TEXT = "text"
     JSON = "json"
+
+
+class ProbeProfile(str, Enum):
+    """Select standard runtime checks or optional compiler validation."""
+
+    STANDARD = "standard"
+    COMPILE = "compile"
 
 
 class BackendKind(str, Enum):
@@ -291,6 +302,8 @@ class RunOptions:
     requirement_overrides: tuple[str, ...]
     backend: BackendRequest
     channel: Channel
+    cuda_compatibility: CompatibilityPolicy
+    probe_profile: ProbeProfile
     extras: tuple[str, ...]
     groups: tuple[str, ...]
     cuda_device: GpuDevice | None
@@ -328,6 +341,14 @@ class RuntimeReport:
     numpy_bridge_test: str
     torchvision_test: str
     torchaudio_test: str
+    runtime_component_version: str = "not-installed"
+    gpu_device_capability: str = "none"
+    compiled_architectures: tuple[str, ...] = ()
+    native_architecture_test: str = "NOT_APPLICABLE"
+    cublas_test: str = "NOT_APPLICABLE"
+    cudnn_test: str = "NOT_APPLICABLE"
+    compile_test: str = "NOT_REQUESTED"
+    probe_profile: str = "standard"
 
     @classmethod
     def from_output(
@@ -347,7 +368,7 @@ class RuntimeReport:
             raise ProbeError("runtime probe did not end with valid JSON") from exc
         if not isinstance(value, dict):
             raise ProbeError("runtime probe JSON must be an object")
-        if value.get("schema_version") != 1:
+        if value.get("schema_version") != 2:
             raise ProbeError("runtime probe schema version is unsupported")
 
         string_fields = (
@@ -362,18 +383,32 @@ class RuntimeReport:
             "numpy_bridge_test",
             "torchvision_test",
             "torchaudio_test",
+            "runtime_component_version",
+            "gpu_device_capability",
+            "native_architecture_test",
+            "cublas_test",
+            "cudnn_test",
+            "compile_test",
+            "probe_profile",
         )
         invalid = [
             field for field in string_fields if not isinstance(value.get(field), str)
         ]
         if invalid:
             raise ProbeError(f"runtime probe has invalid fields: {', '.join(invalid)}")
+        architectures = value.get("compiled_architectures")
+        if not isinstance(architectures, list) or not all(
+            isinstance(item, str) for item in architectures
+        ):
+            raise ProbeError(
+                "runtime probe compiled_architectures must be an array of strings"
+            )
         try:
             backend = BackendCandidate(value["backend"], channel)
         except ConfigurationError as exc:
             raise ProbeError(str(exc)) from exc
         return cls(
-            schema_version=1,
+            schema_version=2,
             backend=backend,
             torch_version=value["torch_version"],
             torchvision_version=value["torchvision_version"],
@@ -385,6 +420,14 @@ class RuntimeReport:
             numpy_bridge_test=value["numpy_bridge_test"],
             torchvision_test=value["torchvision_test"],
             torchaudio_test=value["torchaudio_test"],
+            runtime_component_version=value["runtime_component_version"],
+            gpu_device_capability=value["gpu_device_capability"],
+            compiled_architectures=tuple(architectures),
+            native_architecture_test=value["native_architecture_test"],
+            cublas_test=value["cublas_test"],
+            cudnn_test=value["cudnn_test"],
+            compile_test=value["compile_test"],
+            probe_profile=value["probe_profile"],
         )
 
     def validate_requirements(self, requirements: ProjectRequirements) -> None:
@@ -419,14 +462,96 @@ class RuntimeReport:
                         f"{package} {version} does not satisfy {requirement.specifier}"
                     )
 
+    def validate_probe_results(
+        self,
+        requirements: ProjectRequirements,
+        *,
+        expected_profile: ProbeProfile,
+        require_native_architecture: bool,
+    ) -> None:
+        """Confirm every reported check has the result required by this run.
+
+        Raises:
+            ProbeError: If the probe profile, device identity, or a check result
+                does not match the requested validation.
+        """
+        if self.probe_profile != expected_profile.value:
+            raise ProbeError(
+                f"runtime probe reported profile {self.probe_profile!r}, expected "
+                f"{expected_profile.value!r}"
+            )
+        expected = {
+            "numpy_bridge_test": "PASS",
+            "torchvision_test": (
+                "PASS" if requirements.has_package("torchvision") else "NOT_REQUESTED"
+            ),
+            "torchaudio_test": (
+                "PASS" if requirements.has_package("torchaudio") else "NOT_REQUESTED"
+            ),
+            "compile_test": (
+                "PASS" if expected_profile is ProbeProfile.COMPILE else "NOT_REQUESTED"
+            ),
+        }
+        if self.backend.is_cuda:
+            expected.update(
+                cuda_test="PASS",
+                cublas_test="PASS",
+                cudnn_test="PASS",
+            )
+            if self.gpu_name == "none" or not re.fullmatch(
+                r"[0-9]+\.[0-9]+", self.gpu_device_capability
+            ):
+                raise ProbeError("runtime probe returned invalid CUDA device details")
+            if not self.compiled_architectures:
+                raise ProbeError(
+                    "runtime probe returned no compiled CUDA architectures"
+                )
+            allowed_native = (
+                {"PASS"}
+                if require_native_architecture
+                else {
+                    "PASS",
+                    "PTX_ONLY",
+                }
+            )
+            if self.native_architecture_test not in allowed_native:
+                raise ProbeError(
+                    "runtime probe did not verify the required native architecture"
+                )
+        else:
+            expected.update(
+                cuda_test="NOT_APPLICABLE",
+                cublas_test="NOT_APPLICABLE",
+                cudnn_test="NOT_APPLICABLE",
+                native_architecture_test="NOT_APPLICABLE",
+            )
+            if (
+                self.cuda_runtime != "none"
+                or self.runtime_component_version != "not-installed"
+                or self.gpu_name != "none"
+                or self.gpu_device_capability != "none"
+                or self.compiled_architectures
+            ):
+                raise ProbeError("CPU probe reported unexpected CUDA runtime details")
+
+        for field_name, expected_value in expected.items():
+            actual = getattr(self, field_name)
+            if actual != expected_value:
+                raise ProbeError(
+                    f"runtime probe returned {field_name}={actual!r}, expected "
+                    f"{expected_value!r}"
+                )
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateAttempt:
     """Record one backend candidate result without retaining secret command data."""
 
     backend: str
-    passed: bool
-    detail: str
+    stage: str
+    status: str
+    reason: str
+    compatibility: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -436,6 +561,7 @@ class CommandOutcome:
     status: str
     applied: bool
     runtime: RuntimeReport | None
+    compatibility: CompatibilityDecision | None = None
     attempts: tuple[CandidateAttempt, ...] = ()
     changes: tuple[str, ...] = ()
     backups: tuple[Path, ...] = ()

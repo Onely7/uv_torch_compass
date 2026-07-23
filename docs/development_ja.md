@@ -43,11 +43,11 @@ editable source 環境ではなく wheel artifact を検証します。
 
 ```bash
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
+  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
   uv-torch-compass --version
 
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
+  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
   uv-torch-compass plan --help
 ```
 
@@ -69,7 +69,7 @@ Action の参照は完全な commit SHA で固定します。Dependabot の `git
 
 ## release 管理
 
-Release Please は `main` の Conventional Commit を読み、一つの Release PR を最新の状態に保ちます。Python 用の release 方針により、`CHANGELOG.md`、`pyproject.toml`、`src/uv_torch_compass/__init__.py`、`uv.lock`、release manifest を同じ PR で更新します。最初に提案する release は `v0.1.0` です。
+Release Please は `main` の Conventional Commit を読み、一つの Release PR を最新の状態に保ちます。Python 用の release 方針により、`CHANGELOG.md`、`pyproject.toml`、`src/uv_torch_compass/__init__.py`、`uv.lock`、release manifest を同じ PR で更新します。1.0 未満の破壊的変更は minor version を上げるため、今回の変更では `v0.2.0` の提案を想定します。
 
 version を決める変更には、次の commit prefix を使います。
 
@@ -97,7 +97,7 @@ workflow は組み込みの `GITHUB_TOKEN` だけでも動作します。ただ�
 
 有限の保持期間を持つ GitHub Actions artifact としてだけ upload します。この手動 workflow は tag、GitHub Release、PyPI upload、`id-token` 要求、公開用 credentials を追加しません。tag と GitHub Release の作成は Release Please、package upload は分離した公開 workflow が担当します。
 
-最初の PyPI 公開前に、二つの Trusted Publisher を設定し、package 名を確認して、TestPyPI で workflow を検証します。PyPI への公開が成功するまで、`uvx uv-torch-compass` を利用可能な command として案内しません。
+release ごとに TestPyPI・PyPI の Trusted Publisher 設定を確認し、必要に応じて TestPyPI で候補を試します。tag と artifact を確認してから、保護された `pypi` Environment を承認してください。
 
 ## security boundary
 

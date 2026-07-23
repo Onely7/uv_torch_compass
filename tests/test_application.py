@@ -8,12 +8,14 @@ import pytest
 
 from uv_torch_compass.application import CompassApplication, _requested_cuda_device
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
+from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendRequest,
     Channel,
     GpuDevice,
     Operation,
     OutputFormat,
+    ProbeProfile,
     RunOptions,
 )
 from uv_torch_compass.errors import CommandError, ExternalModificationError
@@ -24,18 +26,30 @@ from uv_torch_compass.uv_commands import UvCommandClient
 def _runtime_json(backend: str = "cpu") -> str:
     return json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "backend": backend,
             "torch_version": "2.7.0",
             "torchvision_version": "not-installed",
             "torchaudio_version": "not-installed",
             "numpy_version": "2.2.0",
             "cuda_runtime": "none" if backend == "cpu" else "12.8",
+            "runtime_component_version": (
+                "not-installed" if backend == "cpu" else "12.8.90"
+            ),
             "gpu_name": "none" if backend == "cpu" else "Fake GPU",
+            "gpu_device_capability": "none" if backend == "cpu" else "8.9",
+            "compiled_architectures": [] if backend == "cpu" else ["sm_89"],
+            "native_architecture_test": (
+                "NOT_APPLICABLE" if backend == "cpu" else "PASS"
+            ),
             "cuda_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "cublas_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "cudnn_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
             "numpy_bridge_test": "PASS",
             "torchvision_test": "NOT_REQUESTED",
             "torchaudio_test": "NOT_REQUESTED",
+            "compile_test": "NOT_REQUESTED",
+            "probe_profile": "standard",
         }
     )
 
@@ -200,6 +214,8 @@ def _options(pyproject: Path, operation: Operation) -> RunOptions:
         requirement_overrides=(),
         backend=BackendRequest.parse("cpu"),
         channel=Channel.STABLE,
+        cuda_compatibility=CompatibilityPolicy.STRICT,
+        probe_profile=ProbeProfile.STANDARD,
         extras=(),
         groups=(),
         cuda_device=cast(GpuDevice | None, None),
@@ -374,6 +390,31 @@ def test_commands_reject_non_linux_and_cuda_without_nvidia(
     with reporter, pytest.raises(CommandError, match="nvidia-smi"):
         CompassApplication(
             cuda_options,
+            cast(ProcessRunner, FakeRunner()),
+            reporter,
+            cast(UvCommandClient, FakeUv(pyproject.parent)),
+        ).run()
+
+
+def test_auto_fails_closed_when_nvidia_inspection_is_invalid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class BrokenInspector:
+        def inspect(self, _requested_device):
+            raise CommandError("nvidia-smi returned malformed output")
+
+    pyproject = _project(tmp_path)
+    options = _options(pyproject, Operation.PLAN)
+    reporter = CommandReporter(options, "0.1.0")
+    monkeypatch.setattr("uv_torch_compass.application.platform.system", lambda: "Linux")
+    monkeypatch.setattr(
+        "uv_torch_compass.application.NvidiaInspector.discover",
+        lambda _runner: BrokenInspector(),
+    )
+
+    with reporter, pytest.raises(CommandError, match="malformed"):
+        CompassApplication(
+            options,
             cast(ProcessRunner, FakeRunner()),
             reporter,
             cast(UvCommandClient, FakeUv(pyproject.parent)),

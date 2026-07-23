@@ -6,6 +6,7 @@ import pytest
 
 from uv_torch_compass.cli import create_parser, main
 from uv_torch_compass.configuration import resolve_options
+from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendCandidate,
     BackendKind,
@@ -13,6 +14,7 @@ from uv_torch_compass.domain import (
     CommandOutcome,
     Operation,
     OutputFormat,
+    ProbeProfile,
     RuntimeReport,
 )
 from uv_torch_compass.errors import ConfigurationError
@@ -56,7 +58,8 @@ def test_cli_overrides_namespaced_environment_and_project_settings(
     _write_project(
         pyproject,
         "\n[tool.uv-torch-compass]\n"
-        'backend = "auto"\nchannel = "stable"\nextras = ["table"]\n',
+        'backend = "auto"\nchannel = "stable"\nextras = ["table"]\n'
+        'cuda-compatibility = "strict"\nprobe-profile = "standard"\n',
     )
     namespace = create_parser().parse_args(
         [
@@ -67,6 +70,10 @@ def test_cli_overrides_namespaced_environment_and_project_settings(
             "nightly",
             "--extra",
             "cli",
+            "--cuda-compatibility",
+            "minor",
+            "--probe-profile",
+            "compile",
             "--torch",
             ">=2.7",
         ]
@@ -85,6 +92,8 @@ def test_cli_overrides_namespaced_environment_and_project_settings(
     assert options.backend.kind is BackendKind.CUDA
     assert options.channel is Channel.NIGHTLY
     assert options.extras == ("cli",)
+    assert options.cuda_compatibility is CompatibilityPolicy.MINOR
+    assert options.probe_profile is ProbeProfile.COMPILE
     assert options.requirement_overrides == ("torch>=2.7",)
 
 
@@ -96,6 +105,8 @@ def test_environment_lists_are_trimmed_and_deduplicated(tmp_path: Path) -> None:
             "UV_TORCH_COMPASS_EXTRAS": "vision, audio,vision,,",
             "UV_TORCH_COMPASS_GROUPS": "training, training",
             "UV_TORCH_COMPASS_OUTPUT_FORMAT": "json",
+            "UV_TORCH_COMPASS_CUDA_COMPATIBILITY": "minor",
+            "UV_TORCH_COMPASS_PROBE_PROFILE": "compile",
         },
         cwd=tmp_path,
     )
@@ -103,6 +114,19 @@ def test_environment_lists_are_trimmed_and_deduplicated(tmp_path: Path) -> None:
     assert options.extras == ("vision", "audio")
     assert options.groups == ("training",)
     assert options.output_format is OutputFormat.JSON
+    assert options.cuda_compatibility is CompatibilityPolicy.MINOR
+    assert options.probe_profile is ProbeProfile.COMPILE
+
+
+def test_new_cuda_settings_default_to_strict_standard(tmp_path: Path) -> None:
+    _write_project(tmp_path / "pyproject.toml")
+
+    options = resolve_options(
+        create_parser().parse_args(["check"]), environ={}, cwd=tmp_path
+    )
+
+    assert options.cuda_compatibility is CompatibilityPolicy.STRICT
+    assert options.probe_profile is ProbeProfile.STANDARD
 
 
 def test_unknown_project_setting_is_rejected(tmp_path: Path) -> None:
@@ -147,6 +171,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
         == 1
     )
     document = json.loads(capsys.readouterr().out)
+    assert document["schema_version"] == 2
     assert document["status"] == "failed"
     assert document["exit_code"] == 1
     assert document["errors"]
@@ -154,7 +179,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
 
 def _runtime_report() -> RuntimeReport:
     return RuntimeReport(
-        1,
+        2,
         BackendCandidate("cpu"),
         "2.7.0",
         "not-installed",
@@ -208,6 +233,8 @@ def test_main_emits_successful_json_document(
     assert status == 0
     assert document["status"] == "planned"
     assert document["selected_backend"] == "cpu"
+    assert document["request"]["cuda_compatibility"] == "strict"
+    assert document["request"]["probe_profile"] == "standard"
 
 
 @pytest.mark.parametrize(
