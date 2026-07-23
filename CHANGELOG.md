@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/Onely7/uv_torch_compass/compare/v0.1.0...v0.1.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* prepare the package for trusted PyPI publishing ([588404c](https://github.com/Onely7/uv_torch_compass/commit/588404cadd182a58090c185e1851facf54fa7d25))
+
 ## 0.1.0 (2026-07-23)
 
 

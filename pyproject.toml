@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "uv-torch-compass"
-version = "0.1.0"
+version = "0.1.1"
 description = "Verify and configure official PyTorch package indexes for uv projects on Linux"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
