@@ -13,15 +13,21 @@ backend は、CPU または NVIDIA CUDA 用の PyTorch build です。uv-torch-c
 ```mermaid
 flowchart TD
     Start([plan、apply、check のいずれかを開始])
-    Inspect[対象 project を読み込む<br/>Python を選び、実行環境を調べる]
+    Inspect[対象 project を読み込む<br/>Python を選び、NVIDIA device を調べる]
     Command{どの command か}
 
-    Check[記録済み index、lockfile、同期状態、<br/>PyTorch の実行状態を確認する]
+    Check[設定済み backend を読み込む]
+    CheckPolicy{backend は driver 方針を<br/>満たしているか}
+    CheckRuntime[lockfile と環境を確認する<br/>選択した runtime probe を実行する]
     CheckResult{すべて正常か}
     Valid([valid<br/>project は変更しない])
 
-    Candidates[CPU・CUDA 候補を試す順番に並べる]
-    Temporary[一時環境で候補を一つ試す<br/>package を入れて PyTorch を実行する]
+    Driver{NVIDIA GPU が見えるか}
+    Policy[具体的な CUDA build ごとに<br/>driver、CUDA 上限、組み込み表を照合する]
+    Candidates[許可した候補を新しい順に並べる<br/>除外した理由も記録する]
+    CPU[公式 CPU 候補を使う]
+    Temporary[一時環境へ候補を一つ install する]
+    Runtime[解決した CUDA component を確認し<br/>tensor と library の検証を行う]
     CandidateResult{候補は検証を通過したか}
     More{次の候補があるか}
     Selected[最初に通過した候補を選ぶ]
@@ -37,11 +43,16 @@ flowchart TD
     Failed([failed])
 
     Start --> Inspect --> Command
-    Command -- check --> Check --> CheckResult
+    Command -- check --> Check --> CheckPolicy
+    CheckPolicy -- いいえ --> Failed
+    CheckPolicy -- はい --> CheckRuntime --> CheckResult
     CheckResult -- はい --> Valid
     CheckResult -- いいえ --> Failed
 
-    Command -- plan または apply --> Candidates --> Temporary --> CandidateResult
+    Command -- plan または apply --> Driver
+    Driver -- はい --> Policy --> Candidates --> Temporary
+    Driver -- いいえ --> CPU --> Temporary
+    Temporary --> Runtime --> CandidateResult
     CandidateResult -- はい --> Selected --> Action
     CandidateResult -- いいえ --> More
     More -- はい --> Temporary
@@ -67,14 +78,28 @@ request を数値 version へ単純化せず uv に渡すため、CPython・PyPy
 
 | 値 | 候補 |
 | --- | --- |
-| `auto` | stable では uv の自動選択、driver と両立する CUDA、CPU の順。nightly では CUDA、CPU の順 |
+| `auto` | NVIDIA GPU があれば許可済みの具体的な CUDA だけ。なければ CPU だけ。GPU 候補の失敗から CPU へ切り替えない |
 | `cuda` | driver と両立する CUDA だけ。CPU は使わない |
 | `cpu` | 公式 CPU index だけ |
 | `cuNNN` | driver との両立を確認したうえで、その CUDA index だけ |
 
-CUDA の識別子は、インストール済み uv の `--torch-backend` help から取得し、新しい順に並べます。uv から一覧を取得できない場合だけ、上限のある組み込み一覧を使って警告します。NVIDIA driver が表示する CUDA 上限で明らかに使えない候補を除外しますが、最終判断は PyTorch の実計算です。
+CUDA の識別子は、インストール済み uv の `--torch-backend` help から取得し、新しい順に並べます。生の `uv --torch-backend auto` は、uv-torch-compass の安全方針より先に runtime を決める可能性があるため候補にしません。uv から一覧を取得できない場合だけ、上限のある組み込み一覧を使って警告します。
 
-stable の `auto` を最初に試すのは、uv 自身の選択方針を利用するためです。uv が `auto` を CPU として解決し、検証を通過した場合はそこで終了し、後続の CUDA 候補を benchmark しません。
+初期値の `strict` は、次の三条件をすべて要求します。
+
+1. backend が version 管理された組み込み互換性表にある
+2. 選択した driver が表にある通常サポートの最低 version 以上である
+3. backend の runtime が `nvidia-smi` の CUDA 上限を超えない
+
+`--cuda-compatibility minor` は、NVIDIA の制限付き minor-version compatibility を同じ CUDA major 系列内だけで明示的に許可します。CUDA 12 から CUDA 13 をまたぐことはありません。minor 候補では、選択した GPU 用の native machine code も必要です。PTX だけに依存できる build は拒否します。採用した場合は text、log、JSON に警告を残し、結果を `success_with_warnings` とします。
+
+未知の backend、component version、driver 境界は安全側に倒して拒否します。保守的な境界値は [NVIDIA CUDA Toolkit release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) と [CUDA minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html) に基づきます。互換性表を実行時に download しないため、新しい CUDA backend を自動採用するには uv-torch-compass の更新が必要です。
+
+## `nvidia-smi` の CUDA と PyTorch runtime
+
+`nvidia-smi` の `CUDA Version` は、インストール済み driver が示す CUDA の上限です。PyTorch wheel に同梱された CUDA runtime の version ではありません。たとえば `cu124` の PyTorch wheel は、system CUDA toolkit がなくても CUDA 12.4 の runtime component を含みます。
+
+uv-torch-compass は両方の値に加え、インストール済み runtime component package も記録・確認します。`strict` では、CUDA 12.4 と表示する driver に `cu128` や `cu129` を選びません。明示した `minor` では、互換性表の最低 driver と architecture の条件を満たす場合だけ、新しい CUDA 12.x runtime を検証できます。
 
 ## stable と nightly
 
@@ -100,7 +125,7 @@ stable の失敗から nightly へ自動で移りません。nightly の install
 
 `--cuda-device` には `nvidia-smi` の index または完全な GPU UUID を指定できます。省略時は `CUDA_VISIBLE_DEVICES` があればその先頭、なければ最初に報告された GPU を選びます。選択した GPU の UUID を runtime へ渡すため、複数 GPU の環境でも論理的な `cuda:0` になります。
 
-CUDA を必須にした場合、NVIDIA 情報の欠落・不正はエラーです。`auto` では警告となり、自動選択と CPU 候補を続けます。
+CUDA を必須にした場合、NVIDIA 情報の欠落はエラーです。`auto` では `nvidia-smi` がなければ CPU 専用 host として扱います。`nvidia-smi` が存在するのに失敗した場合や出力が不正な場合は、不明な NVIDIA 状態を CPU 専用とみなさず失敗します。
 
 ## runtime probe
 
@@ -112,13 +137,26 @@ CUDA を必須にした場合、NVIDIA 情報の欠落・不正はエラーで�
 | CPU | 固定した tensor 計算が期待値になる |
 | NumPy bridge | Tensor から array、array から Tensor の往復で値を維持する |
 | CPU backend | CUDA と ROCm のどちらでもない build である |
+| CUDA identity | 選択 backend、`torch.version.cuda`、インストール済み CUDA runtime component の major・minor が一致する |
 | CUDA backend | 選択 GPU で CUDA の検出、tensor の作成・計算・同期、CPU 転送、NumPy 変換に成功する |
-| torchvision | 選択時に import と代表的な `torchvision.ops.nms` が成功する |
-| torchaudio | 選択時に import と torch を使う gain 処理が成功する |
+| cuBLAS | 小さな GPU 行列積が期待値になる |
+| cuDNN | 正しい cuDNN version を取得でき、小さな GPU 畳み込みが期待値になる |
+| architecture | GPU の compute capability と PyTorch の compiled architecture を報告する。minor では完全一致する native `sm_NN` を要求する |
+| torchvision | CUDA 選択時は GPU 上の `torchvision.ops.nms` が成功する |
+| torchaudio | CUDA 選択時は GPU tensor を使う gain 処理が成功する |
+| compile profile | `--probe-profile compile` では、小さな決定的関数を `torch.compile` して実行できる |
 
 ROCm は検出して明示的に拒否します。runtime 判定は `assert` ではなく通常の条件分岐と例外を使うため、Python の最適化で無効になりません。
 
 NumPy bridge だけが失敗した場合は、`numpy<2` を使って一度だけ再試行します。成功した場合に限り、対象の依存範囲へ Linux 限定の `numpy<2` を追加します。
+
+初期値の `standard` profile は、表の compile profile 以外をすべて確認します。`compile` は Inductor／Triton 経路を追加し、その確認だけのために追加 package をインストールしません。
+
+## 既存の CUDA source 設定
+
+`check` は、`pyproject.toml` に記録済みの index にも現在の方針を適用します。たとえば driver 550.100 上の既存 `cu129` source は、初期値の `strict` では project を変更せず失敗します。対応する置き換え案は `plan` で確認してください。
+
+`--cuda-compatibility minor` は、制約を理解して意図的に許可する場合だけ使います。driver 更新後は `plan` を再実行し、必要なら新たに利用可能になった strict 候補を `apply` してください。
 
 ## apply の phase
 

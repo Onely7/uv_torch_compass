@@ -4,7 +4,7 @@
 
 **`uv-torch-compass` を使うことで、指定した PyTorch のバージョン条件と現在の Linux 実行環境の両方に対して公式 PyTorch index を検証し、最初に検証を通過した取得先を対象プロジェクトの `pyproject.toml` へ安全に設定できます。**
 
-index はパッケージの取得先です。PyTorch は CPU 版と NVIDIA CUDA 版を別々の公式 index で配布しています。このツールはインストールできるかだけでなく、PyTorch と NumPy、選択した GPU、必要に応じて `torchvision` や `torchaudio` を実行してから取得先を反映します。
+index はパッケージの取得先です。PyTorch は CPU 版と NVIDIA CUDA 版を別々の公式 index で配布しています。このツールはインストールできるかだけでなく、初期設定では NVIDIA driver が通常サポートする範囲より新しい CUDA build を除外します。そのうえで PyTorch、NumPy、選択した GPU、cuBLAS、cuDNN、必要に応じて `torchvision` や `torchaudio` を実行してから取得先を反映します。
 
 ## クイックスタート
 
@@ -48,7 +48,12 @@ uvx uv-torch-compass check
 
 ## 検証対象の選び方
 
-初期値の `--backend auto` では、uv の自動選択、インストール済み uv が提示する互換 CUDA 候補、CPU の順に試します。最初に検証を通過した候補で終了し、すべてをベンチマークして最速の候補を選ぶわけではありません。
+初期値の `--backend auto --cuda-compatibility strict` は、次のように動作します。
+
+- NVIDIA GPU が見える場合、driver が通常サポートする具体的な CUDA build だけを新しい順に試します。すべて失敗しても、CPU 版へ暗黙に切り替えません。
+- NVIDIA GPU が見えない場合、公式 CPU 版を試します。
+
+最初に検証を通過した候補で終了し、すべてをベンチマークして最速の候補を選ぶわけではありません。たとえば、`nvidia-smi` に `CUDA Version: 12.4` と表示される環境では、初期設定で `cu129` を採用しません。
 
 検証対象は次のように限定できます。
 
@@ -57,9 +62,10 @@ uv-torch-compass plan --backend cpu
 uv-torch-compass plan --backend cuda
 uv-torch-compass plan --backend cu128
 uv-torch-compass plan --channel nightly
+uv-torch-compass plan --probe-profile compile
 ```
 
-channel の初期値は安定版を示す `stable` です。開発版の `nightly` は、明示した場合だけ使います。順番と検証内容は[バックエンドと実行環境の選択](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works_ja.md)を参照してください。
+channel の初期値は安定版を示す `stable` です。開発版の `nightly` は、明示した場合だけ使います。CUDA minor-version compatibility も `--cuda-compatibility minor` で明示した場合だけ使い、同じ major 系列の新しい CUDA runtime を利用できますが、成功時にも警告が残ります。順番と検証内容は[バックエンドと実行環境の選択](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works_ja.md)を参照してください。
 
 ## 安全性の概要
 
@@ -77,7 +83,8 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 - CPU と NVIDIA CUDA に対応します。AMD ROCm と Intel XPU は非対応です。
 - PyTorch の公式 stable・nightly index に対応します。stable の失敗から nightly へ自動移行しません。
 - 基本依存、選択した extra・依存グループ、uv workspace、`torchvision`、`torchaudio` に対応します。
-- CUDA の成功には、選択した GPU 上で実際の tensor 計算が必要です。NVIDIA driver のインストールや更新は行いません。
+- CUDA の成功には、GPU tensor、cuBLAS、cuDNN、architecture、選択した関連 package の検証が必要です。`--probe-profile compile` では `torch.compile` も確認します。
+- NVIDIA driver のインストールや更新は行いません。driver 更新後は `plan` と `apply` を再実行してください。
 - 終了コードは、成功が `0`、設定・実行の失敗が `1`、コマンド構文の誤りが `2` です。
 
 ## ドキュメント

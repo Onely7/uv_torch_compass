@@ -69,14 +69,19 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | Linux-only command failure | Run `plan`, `apply`, or `check` on Linux; only help/version are cross-platform. |
 | no selected PyTorch requirement applies | Check selected extras/groups and PEP 508 Python or implementation markers. |
 | `nvidia-smi` failure or missing CUDA version | Check NVIDIA driver installation, device visibility, and `CUDA_VISIBLE_DEVICES`. |
-| no usable backend | Inspect candidate warnings, version constraints, network/index access, disk space, and GPU runtime errors. |
+| no CUDA backend satisfies strict compatibility | Update the NVIDIA driver, relax the PyTorch version requirement, explicitly select `--backend cpu`, or review whether `--cuda-compatibility minor` is acceptable. |
+| configured backend is not allowed by strict compatibility | The recorded source may be newer than the driver's normal support. Run `plan` to preview a supported source; `check` does not modify it. |
+| CUDA runtime component does not match the backend | Recreate the synchronized environment from the lockfile and inspect index configuration; the installed CUDA major/minor must match `cuNNN`. |
+| native architecture is missing in minor mode | The wheel lacks native machine code for the selected GPU. Choose another backend or update the driver and return to strict mode. |
+| compile probe failed | Re-run with `--probe-profile standard` to separate normal CUDA operation from the optional Inductor/Triton path. |
+| no usable backend | Inspect candidate reasons, version constraints, network/index access, disk space, and GPU runtime errors. |
 | `uv lock` failure | Read uv's resolver explanation, including unselected scopes and other workspace members. |
 | environment is not synchronized | Run the intended `apply`, or inspect `uv sync --locked --check` output. |
 | final runtime validation failure | The synchronized project did not reproduce the temporary candidate result; rollback should have started. |
 | changed while plan/check was running | Retry after the editor or other dependency process has finished. |
 | another process is updating the workspace | Wait for the other `apply` to finish; do not delete an active lock to force concurrency. |
 
-To isolate CPU behavior, use `plan --backend cpu`. To require GPU behavior without CPU fallback, use `plan --backend cuda`.
+To isolate CPU behavior, use `plan --backend cpu`. On a visible NVIDIA GPU, default `auto` and `cuda` both avoid CPU fallback. If `nvidia-smi` exists but cannot be inspected reliably, fix that error before retrying; the tool will not assume the machine is CPU-only.
 
 ## When to keep backups
 

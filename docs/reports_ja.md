@@ -6,7 +6,7 @@
 
 ## text 出力
 
-進捗は `INSPECT`、`RESOLVE`、`VERIFY`、`APPLY`、`RESTORE` という phase 名で表示します。補足情報、警告、最終 summary から、選択 backend、公式 index、変更、backup、log を確認できます。
+進捗は `INSPECT`、`RESOLVE`、`VERIFY`、`APPLY`、`RESTORE` という phase 名で表示します。補足情報、警告、最終 summary から、選択 backend、互換性判定、除外した新しい候補、公式 index、変更、backup、log を確認できます。
 
 `plan` の summary には、`pyproject.toml` の前後行を含まない unified diff を表示します。`apply` の前に確認してください。
 
@@ -20,23 +20,35 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout には最後の JSON object 一つだけを出します。進捗と警告は stderr へ送るため、stdout の redirect から解析可能な文書を得られます。
 
-schema version は `1` で、次の top-level field を含みます。
+schema version は `2` で、次の top-level field を含みます。
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "operation": "plan",
   "status": "planned",
   "exit_code": 0,
   "applied": false,
   "target": "/work/app/pyproject.toml",
   "workspace": "/work/app",
-  "request": {},
+  "request": {
+    "backend": "auto",
+    "cuda_compatibility": "strict",
+    "probe_profile": "standard"
+  },
   "python": {},
-  "candidate_attempts": [],
-  "selected_backend": "cpu",
-  "selected_index": "https://download.pytorch.org/whl/cpu",
-  "selected_gpu": null,
+  "candidate_attempts": [
+    {
+      "backend": "cu129",
+      "stage": "policy",
+      "status": "skipped",
+      "reason": "driver does not provide strict support",
+      "compatibility": "unsupported"
+    }
+  ],
+  "selected_backend": "cu124",
+  "selected_index": "https://download.pytorch.org/whl/cu124",
+  "selected_gpu": {},
   "resolved_packages": {},
   "validation": {},
   "changes": [],
@@ -47,7 +59,16 @@ schema version は `1` で、次の top-level field を含みます。
 }
 ```
 
-実際の文書には、対象 package、変更案の diff、実行 log、秘密情報を含まない診断 metadata も入ります。候補の詳細には backend、成否、マスク済みの要約を記録し、生の command data は残しません。
+実際の文書には、対象 package、変更案の diff、実行 log、秘密情報を含まない診断 metadata も入ります。GPU metadata には選択 device、NVIDIA driver version、`nvidia-smi` が示す CUDA 上限を記録します。
+
+各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility` を持ちます。方針で除外した候補は install 前に `skipped` として記録します。CUDA の `validation` には次を含みます。
+
+- 解決した PyTorch CUDA runtime と runtime component version
+- 必要な最低 driver と、`strict`、`minor`、`unsupported` の判定
+- GPU compute capability と PyTorch の compiled architecture
+- CUDA tensor、cuBLAS、cuDNN、native architecture、NumPy、`torchvision`、`torchaudio`、必要に応じた compile の結果
+
+候補の詳細にはマスク済みの要約を記録し、生の command data は残しません。field を利用する側は、先に `schema_version` を確認してください。
 
 status は次のいずれかです。
 

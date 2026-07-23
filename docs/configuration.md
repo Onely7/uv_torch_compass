@@ -15,6 +15,8 @@ Add persistent defaults to the target `pyproject.toml`:
 python = "3.12"
 backend = "auto"
 channel = "stable"
+cuda-compatibility = "strict"
+probe-profile = "standard"
 extras = ["vision"]
 groups = ["training"]
 cuda-device = "0"
@@ -39,6 +41,8 @@ All keys are optional. Unknown keys, wrong value types, explicit empty strings, 
 | `UV_TORCH_COMPASS_TORCHAUDIO` | Base `torchaudio` requirement override. |
 | `UV_TORCH_COMPASS_BACKEND` | `auto`, `cpu`, `cuda`, or `cuNNN`. |
 | `UV_TORCH_COMPASS_CHANNEL` | `stable` or `nightly`. |
+| `UV_TORCH_COMPASS_CUDA_COMPATIBILITY` | `strict` or explicitly permitted `minor`. |
+| `UV_TORCH_COMPASS_PROBE_PROFILE` | `standard` or `compile`. |
 | `UV_TORCH_COMPASS_EXTRAS` | Comma-separated extras. |
 | `UV_TORCH_COMPASS_GROUPS` | Comma-separated dependency groups. |
 | `UV_TORCH_COMPASS_CUDA_DEVICE` | NVIDIA index or UUID. |
@@ -64,6 +68,8 @@ This resolves to `vision` followed by `audio`.
 | Python | `.python-version`, then `[project].requires-python` |
 | Backend | `auto` |
 | Channel | `stable` |
+| CUDA compatibility | `strict` |
+| Probe profile | `standard` |
 | Extras and groups | none |
 | CUDA device | first device visible through the current CUDA selection, otherwise the first `nvidia-smi` device |
 | Link mode | `copy` |
@@ -72,6 +78,8 @@ This resolves to `vision` followed by `audio`.
 | Output | `text` |
 
 The configurable timeout covers candidate installation, project checks, runtime probes, lock, and sync. Short metadata commands, such as reading the uv version or available backend names, retain a separate 30-second limit.
+
+`strict` rejects a CUDA runtime newer than the level normally supported by the selected driver. `minor` opts into limited same-major CUDA compatibility and records a warning if used. `standard` runs tensor, NumPy, cuBLAS, cuDNN, architecture, and selected companion-package checks; `compile` adds `torch.compile`.
 
 ## Environment passed to uv
 

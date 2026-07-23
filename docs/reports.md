@@ -6,7 +6,7 @@ Text is the default for interactive use. JSON provides one stable final object f
 
 ## Text output
 
-Progress uses the `INSPECT`, `RESOLVE`, `VERIFY`, `APPLY`, and `RESTORE` phase names. Supporting information, warnings, and the final summary identify the selected backend, official index, changes, backups, and log.
+Progress uses the `INSPECT`, `RESOLVE`, `VERIFY`, `APPLY`, and `RESTORE` phase names. Supporting information, warnings, and the final summary identify the selected backend, compatibility decision, skipped newer candidates, official index, changes, backups, and log.
 
 Under `plan`, the summary includes a zero-context unified diff for `pyproject.toml`. Review it before running `apply`.
 
@@ -20,23 +20,35 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `1` and includes these top-level fields:
+The schema version is `2` and includes these top-level fields:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "operation": "plan",
   "status": "planned",
   "exit_code": 0,
   "applied": false,
   "target": "/work/app/pyproject.toml",
   "workspace": "/work/app",
-  "request": {},
+  "request": {
+    "backend": "auto",
+    "cuda_compatibility": "strict",
+    "probe_profile": "standard"
+  },
   "python": {},
-  "candidate_attempts": [],
-  "selected_backend": "cpu",
-  "selected_index": "https://download.pytorch.org/whl/cpu",
-  "selected_gpu": null,
+  "candidate_attempts": [
+    {
+      "backend": "cu129",
+      "stage": "policy",
+      "status": "skipped",
+      "reason": "driver does not provide strict support",
+      "compatibility": "unsupported"
+    }
+  ],
+  "selected_backend": "cu124",
+  "selected_index": "https://download.pytorch.org/whl/cu124",
+  "selected_gpu": {},
   "resolved_packages": {},
   "validation": {},
   "changes": [],
@@ -47,7 +59,16 @@ The schema version is `1` and includes these top-level fields:
 }
 ```
 
-The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. Candidate details record backend, pass/fail state, and a redacted summary rather than raw command data.
+The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. GPU metadata contains the selected device, NVIDIA driver version, and the CUDA maximum printed by `nvidia-smi`.
+
+Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, and `compatibility`. Policy-rejected candidates are recorded as `skipped` before installation. A successful CUDA `validation` includes:
+
+- resolved PyTorch CUDA runtime and runtime-component version;
+- required minimum driver and `strict`, `minor`, or `unsupported` classification;
+- GPU compute capability and PyTorch compiled architectures;
+- CUDA tensor, cuBLAS, cuDNN, native architecture, NumPy, `torchvision`, `torchaudio`, and optional compile results.
+
+Candidate details use redacted summaries rather than raw command data. Consumers should check `schema_version` before depending on fields.
 
 Possible status values are:
 

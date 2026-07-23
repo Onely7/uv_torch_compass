@@ -13,15 +13,21 @@ The diagram below follows one command from start to finish. A rectangle is an op
 ```mermaid
 flowchart TD
     Start([Start plan, apply, or check])
-    Inspect[Read the target project<br/>Select Python and inspect the machine]
+    Inspect[Read the project<br/>Select Python and inspect NVIDIA devices]
     Command{Which command?}
 
-    Check[Check the recorded index, lockfile,<br/>synchronized environment, and PyTorch runtime]
+    Check[Read the configured backend]
+    CheckPolicy{Does the backend satisfy<br/>the driver policy?}
+    CheckRuntime[Check the lockfile and environment<br/>Run the selected runtime probe]
     CheckResult{Did every check pass?}
     Valid([valid<br/>No project changes])
 
-    Candidates[Build the ordered CPU and CUDA candidate list]
-    Temporary[Test one candidate in a temporary environment<br/>Install packages and run PyTorch]
+    Driver{Is an NVIDIA GPU visible?}
+    Policy[Compare each concrete CUDA build with<br/>the driver, CUDA maximum, and local catalog]
+    Candidates[Keep allowed candidates newest first<br/>Record rejected candidates and reasons]
+    CPU[Use the official CPU candidate]
+    Temporary[Install one candidate in a temporary environment]
+    Runtime[Verify resolved CUDA components<br/>Run tensor and library checks]
     CandidateResult{Did the candidate pass?}
     More{Is another candidate available?}
     Selected[Select the first candidate that passed]
@@ -37,11 +43,16 @@ flowchart TD
     Failed([failed])
 
     Start --> Inspect --> Command
-    Command -- check --> Check --> CheckResult
+    Command -- check --> Check --> CheckPolicy
+    CheckPolicy -- No --> Failed
+    CheckPolicy -- Yes --> CheckRuntime --> CheckResult
     CheckResult -- Yes --> Valid
     CheckResult -- No --> Failed
 
-    Command -- plan or apply --> Candidates --> Temporary --> CandidateResult
+    Command -- plan or apply --> Driver
+    Driver -- Yes --> Policy --> Candidates --> Temporary
+    Driver -- No --> CPU --> Temporary
+    Temporary --> Runtime --> CandidateResult
     CandidateResult -- Yes --> Selected --> Action
     CandidateResult -- No --> More
     More -- Yes --> Temporary
@@ -67,14 +78,28 @@ The resolved interpreter reports its own version. That version must satisfy `req
 
 | Value | Candidates |
 | --- | --- |
-| `auto` | On stable: uv automatic selection, driver-compatible CUDA candidates, then CPU. On nightly: compatible CUDA candidates, then CPU. |
+| `auto` | With an NVIDIA GPU: allowed concrete CUDA candidates only. Without one: CPU only. A failed GPU search never falls back to CPU. |
 | `cuda` | Driver-compatible CUDA candidates only; CPU is not used. |
 | `cpu` | Official CPU index only. |
 | `cuNNN` | That exact CUDA index only, after driver compatibility is checked. |
 
-CUDA identifiers are obtained from the installed uv's `--torch-backend` help and sorted from newer to older. If uv cannot advertise a list, the tool uses a bounded built-in list and records a warning. The NVIDIA driver's reported CUDA maximum removes clearly unsupported candidates, but an actual PyTorch calculation makes the final decision.
+CUDA identifiers are obtained from the installed uv's `--torch-backend` help and sorted from newer to older. Raw `uv --torch-backend auto` is not a candidate because it could choose a runtime before uv-torch-compass applies its safety policy. If uv cannot advertise a list, the tool uses a bounded built-in list and records a warning.
 
-`auto` is tried first on the stable channel because it is uv's own policy. If uv resolves `auto` to CPU and the runtime checks pass, the search stops; later CUDA candidates are not benchmarked.
+The default `strict` policy requires all three checks below:
+
+1. the backend exists in the bundled, version-controlled compatibility catalog;
+2. the selected driver meets the catalogued full-support minimum;
+3. the backend runtime is no newer than the CUDA maximum reported by `nvidia-smi`.
+
+`--cuda-compatibility minor` explicitly allows NVIDIA's limited minor-version compatibility within the same CUDA major family. It never crosses from CUDA 12 to CUDA 13. A minor-compatible candidate must also include native machine code for the selected GPU; a build that can rely only on PTX is rejected. If selected, text, logs, and JSON retain a warning and the result becomes `success_with_warnings`.
+
+Unknown backends, component versions, and driver boundaries fail closed. The conservative boundaries come from the [NVIDIA CUDA Toolkit release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) and the [CUDA minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html). The catalog is not downloaded at runtime, so a newly published CUDA backend requires a uv-torch-compass update before automatic use.
+
+## `nvidia-smi` CUDA and the PyTorch runtime
+
+The `CUDA Version` printed by `nvidia-smi` is the highest CUDA level that the installed driver reports. It is not the CUDA runtime bundled with a PyTorch wheel. For example, a `cu124` PyTorch wheel contains CUDA 12.4 runtime components even when no system CUDA toolkit is installed.
+
+uv-torch-compass records both values and also checks the installed runtime component package. Under `strict`, a driver that reports CUDA 12.4 cannot select `cu128` or `cu129`. Under explicit `minor`, a newer CUDA 12.x runtime may be tested only when the catalogued minimum driver and architecture rules are satisfied.
 
 ## Stable and nightly channels
 
@@ -100,7 +125,7 @@ Stable failures never switch to nightly automatically. Nightly candidate install
 
 `--cuda-device` accepts an `nvidia-smi` index or full GPU UUID. Without it, the first value from `CUDA_VISIBLE_DEVICES` is honored when present; otherwise, the first reported GPU is selected. The selected GPU's UUID is passed to the runtime so it becomes logical `cuda:0` even on a multi-GPU host.
 
-When CUDA is required, missing or invalid NVIDIA information is an error. Under `auto`, the same condition produces a warning and leaves automatic/CPU candidates available.
+When CUDA is required, missing NVIDIA information is an error. With `auto`, an absent `nvidia-smi` means the host is treated as CPU-only. If `nvidia-smi` exists but fails or returns malformed data, the command fails instead of treating uncertain NVIDIA state as a CPU-only host.
 
 ## Runtime probe
 
@@ -112,13 +137,26 @@ Each candidate is installed in a new temporary virtual environment with only the
 | CPU | A fixed tensor calculation returns the expected value. |
 | NumPy bridge | Tensor-to-array and array-to-Tensor round trips preserve values. |
 | CPU backend | The installed build reports neither CUDA nor ROCm. |
+| CUDA identity | The selected backend, `torch.version.cuda`, and installed CUDA runtime component have the same major and minor version. |
 | CUDA backend | CUDA is available and tensor allocation, calculation, synchronization, CPU transfer, and NumPy conversion succeed on the selected GPU. |
-| torchvision | Import and a representative `torchvision.ops.nms` operation succeed when selected. |
-| torchaudio | Import and a torch-connected gain operation succeed when selected. |
+| cuBLAS | A small GPU matrix multiplication returns the expected values. |
+| cuDNN | A valid cuDNN version is reported and a small GPU convolution returns the expected values. |
+| Architecture | The GPU compute capability and PyTorch compiled architecture list are reported. Minor mode requires an exact native `sm_NN` entry. |
+| torchvision | Import and GPU `torchvision.ops.nms` succeed when selected with CUDA. |
+| torchaudio | Import and a torch-connected GPU gain operation succeed when selected with CUDA. |
+| Compile profile | With `--probe-profile compile`, a small deterministic `torch.compile` function compiles and runs. |
 
 ROCm is detected and rejected explicitly. Runtime decisions use ordinary conditional errors rather than `assert`, so optimized Python cannot disable checks.
 
 If only the NumPy bridge fails, the candidate is retried once with `numpy<2`. The target scope receives a Linux-only `numpy<2` requirement only when that retry succeeds.
+
+The default `standard` profile performs every check in the table except the compile-profile row. `compile` adds the Inductor/Triton path and does not install extra packages merely to make that check pass.
+
+## Existing CUDA source settings
+
+`check` applies the current policy to an index that is already recorded in `pyproject.toml`. For example, an existing `cu129` source on driver 550.100 fails under default `strict` without changing the project. Use `plan` to preview a supported replacement.
+
+Use `--cuda-compatibility minor` only when you intentionally accept the documented limitations. After a driver update, run `plan` again and apply the newly eligible strict candidate if appropriate.
 
 ## Apply phases
 

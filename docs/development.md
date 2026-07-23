@@ -43,11 +43,11 @@ Test the wheel artifact, not the editable source environment:
 
 ```bash
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
+  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
   uv-torch-compass --version
 
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
+  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
   uv-torch-compass plan --help
 ```
 
@@ -69,7 +69,7 @@ Action references use full commit SHAs. Dependabot's `github-actions` ecosystem 
 
 ## Release management
 
-Release Please reads Conventional Commit messages on `main` and keeps one Release PR current. The Python release strategy updates `CHANGELOG.md`, `pyproject.toml`, `src/uv_torch_compass/__init__.py`, `uv.lock`, and the release manifest together. The first proposed release is `v0.1.0`.
+Release Please reads Conventional Commit messages on `main` and keeps one Release PR current. The Python release strategy updates `CHANGELOG.md`, `pyproject.toml`, `src/uv_torch_compass/__init__.py`, `uv.lock`, and the release manifest together. Because pre-1.0 breaking changes bump the minor version, this change set is expected to propose `v0.2.0`.
 
 Use these commit prefixes for changes that should determine a version:
 
@@ -97,7 +97,7 @@ The manual artifact workflow produces:
 
 It uploads them only as a GitHub Actions artifact with finite retention. This manual workflow does not create a tag or GitHub Release, upload to PyPI, request `id-token`, or use release credentials. Tag and GitHub Release creation belong to Release Please; package upload belongs to the separate publishing workflow.
 
-Before the first PyPI release, configure both Trusted Publishers, confirm the package name, and test the workflow against TestPyPI. Only after a successful PyPI publication should user documentation introduce bare `uvx uv-torch-compass` as an available command.
+For each release, confirm the TestPyPI and PyPI Trusted Publisher settings, test the candidate on TestPyPI when appropriate, and approve the protected `pypi` Environment only after reviewing the tag and artifacts.
 
 ## Security boundaries
 

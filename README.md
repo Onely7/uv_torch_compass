@@ -4,7 +4,7 @@
 
 **By using `uv-torch-compass`, you can test official PyTorch package indexes against both your version requirements and the current Linux machine, then safely write the first verified choice to the target project's `pyproject.toml`.**
 
-An index is a package download location. PyTorch publishes separate official indexes for CPU and NVIDIA CUDA builds. This tool checks more than whether a package can be installed: it runs PyTorch, NumPy, the selected GPU, and optional `torchvision` or `torchaudio` checks before applying a choice.
+An index is a package download location. PyTorch publishes separate official indexes for CPU and NVIDIA CUDA builds. This tool checks more than whether a package can be installed. By default, it rejects CUDA builds newer than the selected NVIDIA driver normally supports, then runs PyTorch, NumPy, the selected GPU, cuBLAS, cuDNN, and optional `torchvision` or `torchaudio` checks before applying a choice.
 
 ## Quick start
 
@@ -48,7 +48,12 @@ When using a local checkout, replace `/path/to/uv_torch_compass` with this repos
 
 ## Choosing what to test
 
-The default `--backend auto` policy tries uv's automatic selection, compatible CUDA candidates advertised by the installed uv, and CPU in that order. It stops at the first candidate that passes; it does not benchmark all candidates or claim to choose the fastest one.
+The default `--backend auto --cuda-compatibility strict` policy behaves as follows:
+
+- When an NVIDIA GPU is visible, it tests only concrete CUDA builds that the driver normally supports, from newer to older. It does not silently switch to CPU when those candidates fail.
+- When no NVIDIA GPU is visible, it tests the official CPU build.
+
+The command stops at the first candidate that passes. It does not benchmark every candidate or claim to choose the fastest build. This also means that a machine whose `nvidia-smi` output says `CUDA Version: 12.4` will not accept `cu129` under the default policy.
 
 You can narrow the policy:
 
@@ -57,9 +62,10 @@ uv-torch-compass plan --backend cpu
 uv-torch-compass plan --backend cuda
 uv-torch-compass plan --backend cu128
 uv-torch-compass plan --channel nightly
+uv-torch-compass plan --probe-profile compile
 ```
 
-`stable` is the default channel. `nightly` is used only when explicitly selected. See [backend and runtime selection](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works.md) for the exact order and checks.
+`stable` is the default channel. `nightly` is used only when explicitly selected. CUDA minor-version compatibility is also opt-in with `--cuda-compatibility minor`; it can use a newer CUDA runtime within the same major family, but a successful result is reported with a warning. See [backend and runtime selection](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works.md) for the exact order and checks.
 
 ## Safety at a glance
 
@@ -77,7 +83,8 @@ Review `git diff` after `plan` and `apply`. Backups remain after success; [recov
 - CPU and NVIDIA CUDA builds are supported. AMD ROCm and Intel XPU are rejected.
 - Stable and nightly official PyTorch indexes are supported; stable never falls back to nightly automatically.
 - Base dependencies, selected extras, selected dependency groups, uv workspaces, `torchvision`, and `torchaudio` are supported.
-- CUDA success requires a real tensor calculation on the selected GPU. NVIDIA drivers are never installed or updated.
+- CUDA success requires GPU tensor, cuBLAS, cuDNN, architecture, and selected companion-package checks. `--probe-profile compile` additionally tests `torch.compile`.
+- NVIDIA drivers are never installed or updated. Re-run `plan` and `apply` after updating a driver.
 - Exit codes are `0` for success, `1` for configuration or operational failure, and `2` for invalid command syntax.
 
 ## Documentation
