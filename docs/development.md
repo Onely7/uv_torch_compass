@@ -61,9 +61,28 @@ Normal CI tests Python 3.10, 3.11, 3.12, 3.13, and 3.14 on Ubuntu. Separate whee
 | `CodeQL` | Analyze Python and Actions with `security-extended` queries and minimal permissions. |
 | `Real PyTorch CPU smoke test` | Manually install and validate the real CPU build in a temporary target project. |
 | `Build publication artifacts` | Manually build, smoke-test, and upload preparation artifacts without publishing. |
+| `Release Please` | Maintain a Release PR, then create a version tag and GitHub Release when a human merges it. |
 | Dependabot | Check uv, GitHub Actions, and pre-commit dependencies weekly in separate groups. |
 
 Action references use full commit SHAs. Dependabot's `github-actions` ecosystem updates those pins. CUDA runtime validation still requires a Linux host or runner with an NVIDIA GPU.
+
+## Release management
+
+Release Please reads Conventional Commit messages on `main` and keeps one Release PR current. The Python release strategy updates `CHANGELOG.md`, `pyproject.toml`, `src/uv_torch_compass/__init__.py`, `uv.lock`, and the release manifest together. The first proposed release is `v0.1.0`.
+
+Use these commit prefixes for changes that should determine a version:
+
+| Commit | Version effect before 1.0 |
+| --- | --- |
+| `fix: ...` | Patch, such as `0.1.0` to `0.1.1`. |
+| `feat: ...` | Minor, such as `0.1.0` to `0.2.0`. |
+| `feat!: ...` or a `BREAKING CHANGE:` footer | Minor while the project remains below 1.0. |
+
+Other recognized commits can appear in the changelog but do not necessarily request a new release. Prefer squash-merging ordinary pull requests with a Conventional Commit title so `main` contains one clear release entry per change.
+
+Merging the Release PR creates the `vX.Y.Z` tag and a published GitHub Release. It does not publish to PyPI. A future PyPI workflow should remain separate and run only for a published release.
+
+The workflow works immediately with the built-in `GITHUB_TOKEN`. GitHub does not start another workflow for a tag or release created with that token. Before adding the separate PyPI workflow, create a repository secret named `RELEASE_PLEASE_TOKEN` containing a repository-scoped GitHub App token or fine-grained personal access token with Contents, Pull requests, and Issues write access. The existing workflow automatically prefers that secret when present.
 
 ## Publication-preparation artifacts
 
@@ -75,9 +94,9 @@ The manual artifact workflow produces:
 - a JSON provenance manifest with commit, Python, uv, and smoke-test results;
 - the plain-text smoke-test output.
 
-It uploads them only as a GitHub Actions artifact with finite retention. The workflow does not create a tag or GitHub Release, upload to PyPI, request `id-token`, configure Trusted Publishing, or use release credentials.
+It uploads them only as a GitHub Actions artifact with finite retention. This manual workflow does not create a tag or GitHub Release, upload to PyPI, request `id-token`, configure Trusted Publishing, or use release credentials. Tag and GitHub Release creation belong to Release Please.
 
-Before any future public release, choose and add authorship, license, and repository metadata, confirm the package name, configure publishing outside this workflow, and repeat the wheel checks. Only then should documentation introduce bare `uvx uv-torch-compass` as an available command.
+Before any future PyPI release, add the remaining authorship and repository package metadata, confirm the package name, configure publishing outside this workflow, and repeat the wheel checks. Only then should documentation introduce bare `uvx uv-torch-compass` as an available command.
 
 ## Security boundaries
 
@@ -95,3 +114,4 @@ Before any future public release, choose and add authorship, license, and reposi
 - [uv: Building distributions](https://docs.astral.sh/uv/concepts/projects/build/)
 - [GitHub: CodeQL workflow configuration](https://docs.github.com/en/code-security/reference/code-scanning/workflow-configuration-options)
 - [GitHub: Dependabot options](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
+- [Release Please](https://github.com/googleapis/release-please)

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "7cf5d9d47fdf39f89af53dafc42ea4fe712d329e",
+  "release-type": "python",
+  "include-v-in-tag": true,
+  "include-component-in-tag": false,
+  "bump-minor-pre-major": true,
+  "always-update": true,
+  "packages": {
+    ".": {
+      "package-name": "uv-torch-compass",
+      "initial-version": "0.1.0",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='uv-torch-compass')].version"
+        }
+      ]
+    }
+  }
+}
