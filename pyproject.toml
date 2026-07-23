@@ -5,14 +5,56 @@ build-backend = "uv_build"
 [project]
 name = "uv-torch-compass"
 version = "0.1.0"
-description = "Detect and configure a working PyTorch backend for uv projects"
-readme = "README.md"
+description = "Verify and configure official PyTorch package indexes for uv projects on Linux"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.10,<3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Onely7" },
+]
+maintainers = [
+    { name = "Onely7" },
+]
+keywords = [
+    "cuda",
+    "linux",
+    "pytorch",
+    "torch",
+    "uv",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: GPU",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Natural Language :: English",
+    "Natural Language :: Japanese",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Utilities",
+]
 dependencies = [
     "packaging>=24.2",
     "tomli>=2.0.1,<3; python_version < '3.11'",
     "tomlkit>=0.13.2,<1",
 ]
+
+[project.urls]
+Changelog = "https://github.com/Onely7/uv_torch_compass/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/Onely7/uv_torch_compass/blob/main/docs/README.md"
+Homepage = "https://github.com/Onely7/uv_torch_compass"
+Issues = "https://github.com/Onely7/uv_torch_compass/issues"
+Repository = "https://github.com/Onely7/uv_torch_compass"
 
 [project.scripts]
 uv-torch-compass = "uv_torch_compass.cli:main"

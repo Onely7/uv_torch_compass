@@ -61,6 +61,7 @@ Normal CI tests Python 3.10, 3.11, 3.12, 3.13, and 3.14 on Ubuntu. Separate whee
 | `CodeQL` | Analyze Python and Actions with `security-extended` queries and minimal permissions. |
 | `Real PyTorch CPU smoke test` | Manually install and validate the real CPU build in a temporary target project. |
 | `Build publication artifacts` | Manually build, smoke-test, and upload preparation artifacts without publishing. |
+| `Publish Python package` | Publish a manual build to TestPyPI or a published GitHub Release to PyPI through Trusted Publishing. |
 | `Release Please` | Maintain a Release PR, then create a version tag and GitHub Release when a human merges it. |
 | Dependabot | Check uv, GitHub Actions, and pre-commit dependencies weekly in separate groups. |
 
@@ -80,7 +81,7 @@ Use these commit prefixes for changes that should determine a version:
 
 Other recognized commits can appear in the changelog but do not necessarily request a new release. Prefer squash-merging ordinary pull requests with a Conventional Commit title so `main` contains one clear release entry per change.
 
-Merging the Release PR creates the `vX.Y.Z` tag and a published GitHub Release. It does not publish to PyPI. A future PyPI workflow should remain separate and run only for a published release.
+Merging the Release PR creates the `vX.Y.Z` tag and a published GitHub Release. The separate publishing workflow then builds that tag and waits for approval in the `pypi` Environment before uploading through Trusted Publishing.
 
 The workflow works immediately with the built-in `GITHUB_TOKEN`. GitHub does not start another workflow for a tag or release created with that token. Before adding the separate PyPI workflow, create a repository secret named `RELEASE_PLEASE_TOKEN` containing a repository-scoped GitHub App token or fine-grained personal access token with Contents, Pull requests, and Issues write access. The existing workflow automatically prefers that secret when present.
 
@@ -94,9 +95,9 @@ The manual artifact workflow produces:
 - a JSON provenance manifest with commit, Python, uv, and smoke-test results;
 - the plain-text smoke-test output.
 
-It uploads them only as a GitHub Actions artifact with finite retention. This manual workflow does not create a tag or GitHub Release, upload to PyPI, request `id-token`, configure Trusted Publishing, or use release credentials. Tag and GitHub Release creation belong to Release Please.
+It uploads them only as a GitHub Actions artifact with finite retention. This manual workflow does not create a tag or GitHub Release, upload to PyPI, request `id-token`, or use release credentials. Tag and GitHub Release creation belong to Release Please; package upload belongs to the separate publishing workflow.
 
-Before any future PyPI release, add the remaining authorship and repository package metadata, confirm the package name, configure publishing outside this workflow, and repeat the wheel checks. Only then should documentation introduce bare `uvx uv-torch-compass` as an available command.
+Before the first PyPI release, configure both Trusted Publishers, confirm the package name, and test the workflow against TestPyPI. Only after a successful PyPI publication should user documentation introduce bare `uvx uv-torch-compass` as an available command.
 
 ## Security boundaries
 
