@@ -41,6 +41,24 @@ def test_auto_orders_uv_auto_compatible_cuda_and_cpu() -> None:
     ]
 
 
+def test_uv_auto_can_accept_runtime_above_reported_cuda_maximum(
+    tmp_path: Path,
+) -> None:
+    """Characterize the legacy gap between uv auto and concrete filtering."""
+    reporter = ProbeReporter()
+    service = _service(
+        tmp_path,
+        ProbeUv(),
+        ProbeRunner([CommandResult(0, _report("cu129"), "")]),
+        reporter,
+    )
+
+    outcome = service.find_working_candidate((BackendCandidate("auto"),))
+
+    assert outcome.runtime.backend.value == "cu129"
+    assert outcome.attempts[0].detail == "resolved as cu129"
+
+
 def test_nightly_auto_uses_concrete_candidates_only() -> None:
     plan = build_candidate_plan(
         BackendRequest.parse("auto"),
