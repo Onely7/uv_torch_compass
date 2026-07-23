@@ -179,7 +179,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
 
 def _runtime_report() -> RuntimeReport:
     return RuntimeReport(
-        1,
+        2,
         BackendCandidate("cpu"),
         "2.7.0",
         "not-installed",

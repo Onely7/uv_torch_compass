@@ -15,6 +15,7 @@ from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
     CompatibilityLevel,
+    validate_runtime_identity,
 )
 from uv_torch_compass.domain import (
     BackendKind,
@@ -27,6 +28,7 @@ from uv_torch_compass.domain import (
 )
 from uv_torch_compass.errors import (
     CommandError,
+    ConfigurationError,
     ExternalModificationError,
     ProjectUpdateError,
 )
@@ -284,6 +286,7 @@ class CompassApplication:
                     python,
                     verified.runtime.backend,
                     gpu_selector,
+                    verified.compatibility,
                 )
                 final_compatibility = self._compatibility_for(final, nvidia)
             except BaseException as exc:
@@ -346,7 +349,12 @@ class CompassApplication:
             self.reporter,
         )
         runtime = self._run_project_probe(
-            workspace, requirements, python, configured, gpu_selector
+            workspace,
+            requirements,
+            python,
+            configured,
+            gpu_selector,
+            compatibility,
         )
         initial_state.require_unchanged(self.options.operation)
         return CommandOutcome(
@@ -391,12 +399,17 @@ class CompassApplication:
         python: ResolvedPython,
         expected_backend,
         gpu_selector: str | None,
+        compatibility: CompatibilityDecision,
     ) -> RuntimeReport:
         arguments: list[str | Path] = [
             Path(__file__).with_name("runtime_probe.py").resolve(),
             "--expected-backend",
             expected_backend.value,
+            "--probe-profile",
+            self.options.probe_profile.value,
         ]
+        if compatibility.level is CompatibilityLevel.MINOR:
+            arguments.append("--require-native-architecture")
         if requirements.has_package("torchvision"):
             arguments.append("--validate-torchvision")
         if requirements.has_package("torchaudio"):
@@ -415,11 +428,25 @@ class CompassApplication:
             result.stdout, channel=expected_backend.channel
         )
         report.validate_requirements(requirements)
+        if report.probe_profile != self.options.probe_profile.value:
+            raise CommandError(
+                f"final runtime reported profile {report.probe_profile!r}, expected "
+                f"{self.options.probe_profile.value!r}"
+            )
         if report.backend.value != expected_backend.value:
             raise CommandError(
                 f"final runtime reported {report.backend.value}, expected "
                 f"{expected_backend.value}"
             )
+        if report.backend.is_cuda:
+            try:
+                validate_runtime_identity(
+                    report.backend.value,
+                    cuda_runtime=report.cuda_runtime,
+                    runtime_component=report.runtime_component_version,
+                )
+            except ConfigurationError as exc:
+                raise CommandError(str(exc)) from exc
         return report
 
     def _compatibility_for(

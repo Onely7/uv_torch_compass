@@ -105,7 +105,7 @@ def test_text_report_prints_selection_diff_error_and_workspace(
 ) -> None:
     options = _text_options(tmp_path)
     runtime = RuntimeReport(
-        1,
+        2,
         BackendCandidate("cpu"),
         "2.7.0",
         "0.22.0",

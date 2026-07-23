@@ -26,18 +26,30 @@ from uv_torch_compass.uv_commands import UvCommandClient
 def _runtime_json(backend: str = "cpu") -> str:
     return json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "backend": backend,
             "torch_version": "2.7.0",
             "torchvision_version": "not-installed",
             "torchaudio_version": "not-installed",
             "numpy_version": "2.2.0",
             "cuda_runtime": "none" if backend == "cpu" else "12.8",
+            "runtime_component_version": (
+                "not-installed" if backend == "cpu" else "12.8.90"
+            ),
             "gpu_name": "none" if backend == "cpu" else "Fake GPU",
+            "gpu_device_capability": "none" if backend == "cpu" else "8.9",
+            "compiled_architectures": [] if backend == "cpu" else ["sm_89"],
+            "native_architecture_test": (
+                "NOT_APPLICABLE" if backend == "cpu" else "PASS"
+            ),
             "cuda_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "cublas_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "cudnn_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
             "numpy_bridge_test": "PASS",
             "torchvision_test": "NOT_REQUESTED",
             "torchaudio_test": "NOT_REQUESTED",
+            "compile_test": "NOT_REQUESTED",
+            "probe_profile": "standard",
         }
     )
 

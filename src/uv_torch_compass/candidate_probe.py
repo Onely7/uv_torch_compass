@@ -12,6 +12,7 @@ from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
     CompatibilityLevel,
     CompatibilityPolicy,
+    validate_runtime_identity,
 )
 from uv_torch_compass.domain import (
     BackendCandidate,
@@ -20,7 +21,7 @@ from uv_torch_compass.domain import (
     ProjectRequirements,
     RuntimeReport,
 )
-from uv_torch_compass.errors import CommandError, ProbeError
+from uv_torch_compass.errors import CommandError, ConfigurationError, ProbeError
 from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.uv_commands import UvCommandClient
@@ -147,8 +148,14 @@ class CandidateProbeService:
     def _run_probe(self, venv: Path, candidate: BackendCandidate):
         expected = candidate.value if candidate.is_concrete else None
         arguments: list[str | Path] = [venv / "bin" / "python", self.runtime_probe]
+        arguments.extend(["--probe-profile", self.probe_profile.value])
         if expected:
             arguments.extend(["--expected-backend", expected])
+        if (
+            candidate.is_cuda
+            and self._compatibility_for(candidate).level is CompatibilityLevel.MINOR
+        ):
+            arguments.append("--require-native-architecture")
         if self.requirements.has_package("torchvision"):
             arguments.append("--validate-torchvision")
         if self.requirements.has_package("torchaudio"):
@@ -172,7 +179,17 @@ class CandidateProbeService:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
             report.validate_requirements(self.requirements)
-        except ProbeError as exc:
+            if report.probe_profile != self.probe_profile.value:
+                raise ProbeError(
+                    f"runtime probe reported profile {report.probe_profile!r}"
+                )
+            if report.backend.is_cuda:
+                validate_runtime_identity(
+                    report.backend.value,
+                    cuda_runtime=report.cuda_runtime,
+                    runtime_component=report.runtime_component_version,
+                )
+        except (ConfigurationError, ProbeError) as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return None
         if candidate.is_concrete and report.backend.value != candidate.value:

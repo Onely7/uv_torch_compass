@@ -242,11 +242,19 @@ def _result_document(
             "torchaudio": runtime.torchaudio_version,
             "numpy": runtime.numpy_version,
             "cuda_runtime": runtime.cuda_runtime,
+            "runtime_component_version": runtime.runtime_component_version,
             "gpu_name": runtime.gpu_name,
+            "gpu_device_capability": runtime.gpu_device_capability,
+            "compiled_architectures": list(runtime.compiled_architectures),
+            "native_architecture_test": runtime.native_architecture_test,
             "cuda_test": runtime.cuda_test,
+            "cublas_test": runtime.cublas_test,
+            "cudnn_test": runtime.cudnn_test,
             "numpy_bridge_test": runtime.numpy_bridge_test,
             "torchvision_test": runtime.torchvision_test,
             "torchaudio_test": runtime.torchaudio_test,
+            "compile_test": runtime.compile_test,
+            "probe_profile": runtime.probe_profile,
         }
         if outcome.compatibility is not None:
             runtime_document["compatibility"] = {

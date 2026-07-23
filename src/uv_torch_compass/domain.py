@@ -341,6 +341,14 @@ class RuntimeReport:
     numpy_bridge_test: str
     torchvision_test: str
     torchaudio_test: str
+    runtime_component_version: str = "not-installed"
+    gpu_device_capability: str = "none"
+    compiled_architectures: tuple[str, ...] = ()
+    native_architecture_test: str = "NOT_APPLICABLE"
+    cublas_test: str = "NOT_APPLICABLE"
+    cudnn_test: str = "NOT_APPLICABLE"
+    compile_test: str = "NOT_REQUESTED"
+    probe_profile: str = "standard"
 
     @classmethod
     def from_output(
@@ -360,7 +368,7 @@ class RuntimeReport:
             raise ProbeError("runtime probe did not end with valid JSON") from exc
         if not isinstance(value, dict):
             raise ProbeError("runtime probe JSON must be an object")
-        if value.get("schema_version") != 1:
+        if value.get("schema_version") != 2:
             raise ProbeError("runtime probe schema version is unsupported")
 
         string_fields = (
@@ -375,18 +383,32 @@ class RuntimeReport:
             "numpy_bridge_test",
             "torchvision_test",
             "torchaudio_test",
+            "runtime_component_version",
+            "gpu_device_capability",
+            "native_architecture_test",
+            "cublas_test",
+            "cudnn_test",
+            "compile_test",
+            "probe_profile",
         )
         invalid = [
             field for field in string_fields if not isinstance(value.get(field), str)
         ]
         if invalid:
             raise ProbeError(f"runtime probe has invalid fields: {', '.join(invalid)}")
+        architectures = value.get("compiled_architectures")
+        if not isinstance(architectures, list) or not all(
+            isinstance(item, str) for item in architectures
+        ):
+            raise ProbeError(
+                "runtime probe compiled_architectures must be an array of strings"
+            )
         try:
             backend = BackendCandidate(value["backend"], channel)
         except ConfigurationError as exc:
             raise ProbeError(str(exc)) from exc
         return cls(
-            schema_version=1,
+            schema_version=2,
             backend=backend,
             torch_version=value["torch_version"],
             torchvision_version=value["torchvision_version"],
@@ -398,6 +420,14 @@ class RuntimeReport:
             numpy_bridge_test=value["numpy_bridge_test"],
             torchvision_test=value["torchvision_test"],
             torchaudio_test=value["torchaudio_test"],
+            runtime_component_version=value["runtime_component_version"],
+            gpu_device_capability=value["gpu_device_capability"],
+            compiled_architectures=tuple(architectures),
+            native_architecture_test=value["native_architecture_test"],
+            cublas_test=value["cublas_test"],
+            cudnn_test=value["cudnn_test"],
+            compile_test=value["compile_test"],
+            probe_profile=value["probe_profile"],
         )
 
     def validate_requirements(self, requirements: ProjectRequirements) -> None:

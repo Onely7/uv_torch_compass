@@ -46,18 +46,26 @@ def test_nightly_candidate_uses_official_nightly_index() -> None:
 def test_runtime_report_validates_schema_and_requirement_versions() -> None:
     output = json.dumps(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "backend": "cpu",
             "torch_version": "2.7.0+cpu",
             "torchvision_version": "not-installed",
             "torchaudio_version": "not-installed",
             "numpy_version": "2.2.0",
             "cuda_runtime": "none",
+            "runtime_component_version": "not-installed",
             "gpu_name": "none",
+            "gpu_device_capability": "none",
+            "compiled_architectures": [],
+            "native_architecture_test": "NOT_APPLICABLE",
             "cuda_test": "NOT_APPLICABLE",
+            "cublas_test": "NOT_APPLICABLE",
+            "cudnn_test": "NOT_APPLICABLE",
             "numpy_bridge_test": "PASS",
             "torchvision_test": "NOT_REQUESTED",
             "torchaudio_test": "NOT_REQUESTED",
+            "compile_test": "NOT_REQUESTED",
+            "probe_profile": "standard",
         }
     )
     report = RuntimeReport.from_output(output)
@@ -75,7 +83,35 @@ def test_runtime_report_validates_schema_and_requirement_versions() -> None:
 
 def test_runtime_report_rejects_wrong_schema() -> None:
     with pytest.raises(ProbeError, match="schema"):
-        RuntimeReport.from_output('{"schema_version": 2}')
+        RuntimeReport.from_output('{"schema_version": 1}')
+
+
+def test_runtime_report_rejects_invalid_compiled_architectures() -> None:
+    invalid = {
+        "schema_version": 2,
+        "backend": "cpu",
+        "torch_version": "2.7.0",
+        "torchvision_version": "not-installed",
+        "torchaudio_version": "not-installed",
+        "numpy_version": "2.2.0",
+        "cuda_runtime": "none",
+        "runtime_component_version": "not-installed",
+        "gpu_name": "none",
+        "gpu_device_capability": "none",
+        "compiled_architectures": "sm_89",
+        "native_architecture_test": "NOT_APPLICABLE",
+        "cuda_test": "NOT_APPLICABLE",
+        "cublas_test": "NOT_APPLICABLE",
+        "cudnn_test": "NOT_APPLICABLE",
+        "numpy_bridge_test": "PASS",
+        "torchvision_test": "NOT_REQUESTED",
+        "torchaudio_test": "NOT_REQUESTED",
+        "compile_test": "NOT_REQUESTED",
+        "probe_profile": "standard",
+    }
+
+    with pytest.raises(ProbeError, match="compiled_architectures"):
+        RuntimeReport.from_output(json.dumps(invalid))
 
 
 @pytest.mark.parametrize(

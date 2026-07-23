@@ -29,6 +29,8 @@ class FakeTensor:
         return self
 
     def __matmul__(self, _other):
+        if self.values and isinstance(self.values[0], list):
+            return FakeTensor([[2.0, 2.0], [2.0, 2.0]])
         return self
 
     def sum(self):
@@ -72,10 +74,22 @@ def _install_fake_runtime(
         values, broken_numpy=broken_numpy
     )
     torch.from_numpy = lambda array: FakeTensor(array.values)
+    torch.ones = lambda shape, **_kwargs: FakeTensor(
+        [[1.0, 1.0], [1.0, 1.0]] if shape == (2, 2) else [1.0]
+    )
+    torch.backends = SimpleNamespace(cudnn=SimpleNamespace(version=lambda: 9200))
+    torch.nn = SimpleNamespace(
+        functional=SimpleNamespace(
+            conv2d=lambda *_args: FakeTensor([[[[4.0, 4.0], [4.0, 4.0]]]])
+        )
+    )
+    torch.compile = lambda function, **_kwargs: function
     torch.cuda = SimpleNamespace(
         is_available=lambda: cuda_available,
         synchronize=lambda _index=0: None,
         get_device_name=lambda _index: "Fake GPU",
+        get_device_capability=lambda _index: (8, 9),
+        get_arch_list=lambda: ["sm_89", "compute_90"],
     )
 
     torchvision = cast(Any, ModuleType("torchvision"))
@@ -88,6 +102,11 @@ def _install_fake_runtime(
     monkeypatch.setitem(sys.modules, "torch", torch)
     monkeypatch.setitem(sys.modules, "torchvision", torchvision)
     monkeypatch.setitem(sys.modules, "torchaudio", torchaudio)
+    monkeypatch.setattr(
+        runtime_probe.importlib.metadata,
+        "version",
+        lambda _distribution: "12.8.90",
+    )
 
 
 def test_runtime_reports_cpu_and_optional_packages(monkeypatch) -> None:
@@ -99,7 +118,7 @@ def test_runtime_reports_cpu_and_optional_packages(monkeypatch) -> None:
         expected_backend="cpu",
     )
 
-    assert report["schema_version"] == 1
+    assert report["schema_version"] == 2
     assert report["backend"] == "cpu"
     assert report["torchvision_test"] == "PASS"
     assert report["torchaudio_test"] == "PASS"
@@ -117,6 +136,10 @@ def test_runtime_reports_cuda_execution(monkeypatch) -> None:
     assert report["backend"] == "cu128"
     assert report["gpu_name"] == "Fake GPU"
     assert report["cuda_test"] == "PASS"
+    assert report["cublas_test"] == "PASS"
+    assert report["cudnn_test"] == "PASS"
+    assert report["gpu_device_capability"] == "8.9"
+    assert report["runtime_component_version"] == "12.8.90"
 
 
 @pytest.mark.parametrize(
@@ -146,7 +169,7 @@ def test_runtime_main_emits_json_or_stable_error(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         runtime_probe,
         "_validate_runtime",
-        lambda **_options: {"schema_version": 1, "backend": "cpu"},
+        lambda **_options: {"schema_version": 2, "backend": "cpu"},
     )
     assert runtime_probe.main(["--expected-backend", "cpu"]) == 0
     assert '"backend": "cpu"' in capsys.readouterr().out
@@ -221,3 +244,49 @@ def test_runtime_rejects_failed_cuda_tensor_operation(monkeypatch) -> None:
         )
 
     assert captured.value.exit_code == 21
+
+
+def test_runtime_compile_profile_executes_compiled_function(monkeypatch) -> None:
+    _install_fake_runtime(monkeypatch, cuda_runtime="12.8")
+
+    report = runtime_probe._validate_runtime(
+        validate_torchvision=False,
+        expected_backend="cu128",
+        probe_profile="compile",
+    )
+
+    assert report["compile_test"] == "PASS"
+
+
+def test_runtime_compile_profile_rejects_compiler_failure(monkeypatch) -> None:
+    _install_fake_runtime(monkeypatch, cuda_runtime="12.8")
+    torch = cast(Any, sys.modules["torch"])
+
+    def fail_compile(*_args, **_kwargs):
+        raise RuntimeError("compiler unavailable")
+
+    torch.compile = fail_compile
+
+    with pytest.raises(runtime_probe.RuntimeValidationError) as captured:
+        runtime_probe._validate_runtime(
+            validate_torchvision=False,
+            expected_backend="cu128",
+            probe_profile="compile",
+        )
+
+    assert captured.value.exit_code == 27
+
+
+def test_minor_probe_requires_native_architecture(monkeypatch) -> None:
+    _install_fake_runtime(monkeypatch, cuda_runtime="12.8")
+    torch = cast(Any, sys.modules["torch"])
+    torch.cuda.get_arch_list = lambda: ["compute_89"]
+
+    with pytest.raises(runtime_probe.RuntimeValidationError) as captured:
+        runtime_probe._validate_runtime(
+            validate_torchvision=False,
+            expected_backend="cu128",
+            require_native_architecture=True,
+        )
+
+    assert captured.value.exit_code == 28
