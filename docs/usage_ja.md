@@ -4,9 +4,15 @@
 
 uv-torch-compass には三つの command があります。対象プロジェクトを変更しないのは `plan` と `check`、更新するのは `apply` だけです。
 
-## ローカル版を実行する
+## コマンドを実行する
 
-checkout したソースから実行する場合は、`uvx` の `--from` にそのディレクトリを指定します。
+PyPI に公開された版は、次のように実行できます。
+
+```bash
+uvx uv-torch-compass --version
+```
+
+ローカルのリポジトリ、wheel、未公開版を試す場合は、`uvx` の `--from` で取得元を指定します。
 
 ```bash
 uvx --from /path/to/uv_torch_compass uv-torch-compass --version
@@ -20,8 +26,6 @@ uv build --no-sources
 uvx --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
   uv-torch-compass --help
 ```
-
-まだ PyPI へ公開していないため、`--from` のない `uvx uv-torch-compass` は利用できません。
 
 ## `plan`: 検証して変更案を見る
 

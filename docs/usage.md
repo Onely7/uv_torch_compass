@@ -4,9 +4,15 @@
 
 uv-torch-compass has three commands. `plan` and `check` are read-only for the target project; `apply` is the only command that updates it.
 
-## Run a local build
+## Run the command
 
-From a checkout, point `uvx` at the source directory:
+For a version published on PyPI, run:
+
+```bash
+uvx uv-torch-compass --version
+```
+
+To test a local checkout, wheel, or unreleased version, point `uvx` at it with `--from`:
 
 ```bash
 uvx --from /path/to/uv_torch_compass uv-torch-compass --version
@@ -20,8 +26,6 @@ uv build --no-sources
 uvx --from dist/uv_torch_compass-0.1.0-py3-none-any.whl \
   uv-torch-compass --help
 ```
-
-The project is not on PyPI yet, so `uvx uv-torch-compass` without `--from` is not a supported installation method.
 
 ## `plan`: verify and preview
 

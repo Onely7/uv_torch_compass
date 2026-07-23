@@ -1,13 +1,10 @@
 # uv-torch-compass
 
-[English](README.md)
+[English](https://github.com/Onely7/uv_torch_compass/blob/main/README.md)
 
 **`uv-torch-compass` を使うことで、指定した PyTorch のバージョン条件と現在の Linux 実行環境の両方に対して公式 PyTorch index を検証し、最初に検証を通過した取得先を対象プロジェクトの `pyproject.toml` へ安全に設定できます。**
 
 index はパッケージの取得先です。PyTorch は CPU 版と NVIDIA CUDA 版を別々の公式 index で配布しています。このツールはインストールできるかだけでなく、PyTorch と NumPy、選択した GPU、必要に応じて `torchvision` や `torchaudio` を実行してから取得先を反映します。
-
-> [!IMPORTANT]
-> このプロジェクトは、まだ PyPI へ公開していません。ローカルのリポジトリまたは wheel を指定し、`uvx --from <wheel-or-source> uv-torch-compass` で実行してください。短い `uvx uv-torch-compass` は、将来 PyPI へ公開したあとに利用するコマンドです。
 
 ## クイックスタート
 
@@ -23,7 +20,13 @@ requires-python = ">=3.10,<3.15"
 dependencies = ["torch>=2.5"]
 ```
 
-対象プロジェクトで、まず候補を検証して変更案を確認します。
+対象プロジェクトで、PyPI に公開された版を使い、まず候補を検証して変更案を確認します。
+
+```bash
+uvx uv-torch-compass plan
+```
+
+ローカルのリポジトリや wheel を試す場合は、取得元を明示します。
 
 ```bash
 uvx --from /path/to/uv_torch_compass uv-torch-compass plan
@@ -32,16 +35,16 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass plan
 変更案に問題がなければ反映します。`pyproject.toml` を更新し、workspace を lock し、対象環境を同期したあと、もう一度実行検証します。
 
 ```bash
-uvx --from /path/to/uv_torch_compass uv-torch-compass apply
+uvx uv-torch-compass apply
 ```
 
 あとから、記録済みの取得先、lockfile、同期状態、インストール済みの実行環境を変更せず確認できます。
 
 ```bash
-uvx --from /path/to/uv_torch_compass uv-torch-compass check
+uvx uv-torch-compass check
 ```
 
-`/path/to/uv_torch_compass` は、このリポジトリのパスへ置き換えてください。別のディレクトリから対象を指定する場合は、`--pyproject /path/to/project/pyproject.toml` を追加します。
+ローカル版を使う場合は、`/path/to/uv_torch_compass` をこのリポジトリのパスへ置き換え、`apply` と `check` にも同じ `--from` を付けてください。別のディレクトリから対象を指定する場合は、`--pyproject /path/to/project/pyproject.toml` を追加します。
 
 ## 検証対象の選び方
 
@@ -56,7 +59,7 @@ uv-torch-compass plan --backend cu128
 uv-torch-compass plan --channel nightly
 ```
 
-channel の初期値は安定版を示す `stable` です。開発版の `nightly` は、明示した場合だけ使います。順番と検証内容は[バックエンドと実行環境の選択](docs/how-it-works_ja.md)を参照してください。
+channel の初期値は安定版を示す `stable` です。開発版の `nightly` は、明示した場合だけ使います。順番と検証内容は[バックエンドと実行環境の選択](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works_ja.md)を参照してください。
 
 ## 安全性の概要
 
@@ -66,7 +69,7 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 - lock、sync、最終検証、timeout、SIGINT、SIGTERM の失敗時は、ファイルを復元し、環境の復旧も試みます。
 - ログと JSON report は一般的な認証情報をマスクし、所有者だけが読める権限で作ります。
 
-`plan` と `apply` のあとには `git diff` を確認してください。成功後もバックアップは残ります。名前と復旧上の制約は[復旧とトラブル対応](docs/recovery_ja.md)で説明します。
+`plan` と `apply` のあとには `git diff` を確認してください。成功後もバックアップは残ります。名前と復旧上の制約は[復旧とトラブル対応](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery_ja.md)で説明します。
 
 ## 対応範囲
 
@@ -81,13 +84,13 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 
 | 目的 | 文書 |
 | --- | --- |
-| コマンドとオプションを確認する | [CLI の使い方](docs/usage_ja.md) |
-| プロジェクト設定と環境変数を指定する | [設定](docs/configuration_ja.md) |
-| 処理の流れ、backend、channel、GPU、Python、実行検証を理解する | [選択の仕組み](docs/how-it-works_ja.md) |
-| extra、依存グループ、workspace を使う | [プロジェクトと依存範囲](docs/projects-and-scopes_ja.md) |
-| text・JSON の結果を利用する | [report と自動化](docs/reports_ja.md) |
-| ファイルを復旧し、失敗を調べる | [復旧とトラブル対応](docs/recovery_ja.md) |
-| テスト、build、artifact 準備を行う | [開発](docs/development_ja.md) |
-| 検証済みの配布 package を公開する | [公開](docs/publishing_ja.md) |
+| コマンドとオプションを確認する | [CLI の使い方](https://github.com/Onely7/uv_torch_compass/blob/main/docs/usage_ja.md) |
+| プロジェクト設定と環境変数を指定する | [設定](https://github.com/Onely7/uv_torch_compass/blob/main/docs/configuration_ja.md) |
+| 処理の流れ、backend、channel、GPU、Python、実行検証を理解する | [選択の仕組み](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works_ja.md) |
+| extra、依存グループ、workspace を使う | [プロジェクトと依存範囲](https://github.com/Onely7/uv_torch_compass/blob/main/docs/projects-and-scopes_ja.md) |
+| text・JSON の結果を利用する | [report と自動化](https://github.com/Onely7/uv_torch_compass/blob/main/docs/reports_ja.md) |
+| ファイルを復旧し、失敗を調べる | [復旧とトラブル対応](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery_ja.md) |
+| テスト、build、artifact 準備を行う | [開発](https://github.com/Onely7/uv_torch_compass/blob/main/docs/development_ja.md) |
+| 検証済みの配布 package を公開する | [公開](https://github.com/Onely7/uv_torch_compass/blob/main/docs/publishing_ja.md) |
 
-文書全体は[ドキュメント一覧](docs/README_ja.md)から確認できます。
+文書全体は[ドキュメント一覧](https://github.com/Onely7/uv_torch_compass/blob/main/docs/README_ja.md)から確認できます。
