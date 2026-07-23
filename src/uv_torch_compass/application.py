@@ -9,11 +9,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from uv_torch_compass.candidate_probe import (
-    CandidateProbeService,
-    ProbeOutcome,
-    build_candidate_plan,
-)
+from uv_torch_compass.backend_selection import build_candidate_plan
+from uv_torch_compass.candidate_probe import CandidateProbeService, ProbeOutcome
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.domain import (
     BackendKind,

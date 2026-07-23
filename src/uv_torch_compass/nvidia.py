@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.command_runner import ProcessRunner
+from uv_torch_compass.cuda_compatibility import (
+    backend_within_reported_cuda_maximum,
+)
 from uv_torch_compass.errors import CommandError, ConfigurationError
 
 
@@ -41,21 +44,7 @@ class NvidiaSnapshot:
 
     def supports_backend(self, backend: str) -> bool:
         """Return whether the driver's advertised CUDA maximum includes a backend."""
-        if not self.driver_cuda_max or not backend.startswith("cu"):
-            return True
-        digits = backend.removeprefix("cu")
-        if len(digits) < 2:
-            return False
-        backend_version = (int(digits[:-1]), int(digits[-1]))
-        try:
-            maximum_parts = self.driver_cuda_max.split(".", 1)
-            maximum_version = (
-                int(maximum_parts[0]),
-                int(maximum_parts[1]) if len(maximum_parts) > 1 else 0,
-            )
-        except ValueError:
-            return True
-        return backend_version <= maximum_version
+        return backend_within_reported_cuda_maximum(backend, self.driver_cuda_max)
 
 
 @dataclass(frozen=True, slots=True)
