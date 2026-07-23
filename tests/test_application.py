@@ -396,6 +396,31 @@ def test_commands_reject_non_linux_and_cuda_without_nvidia(
         ).run()
 
 
+def test_auto_fails_closed_when_nvidia_inspection_is_invalid(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class BrokenInspector:
+        def inspect(self, _requested_device):
+            raise CommandError("nvidia-smi returned malformed output")
+
+    pyproject = _project(tmp_path)
+    options = _options(pyproject, Operation.PLAN)
+    reporter = CommandReporter(options, "0.1.0")
+    monkeypatch.setattr("uv_torch_compass.application.platform.system", lambda: "Linux")
+    monkeypatch.setattr(
+        "uv_torch_compass.application.NvidiaInspector.discover",
+        lambda _runner: BrokenInspector(),
+    )
+
+    with reporter, pytest.raises(CommandError, match="malformed"):
+        CompassApplication(
+            options,
+            cast(ProcessRunner, FakeRunner()),
+            reporter,
+            cast(UvCommandClient, FakeUv(pyproject.parent)),
+        ).run()
+
+
 def test_check_rejects_missing_or_stale_lock(tmp_path: Path, monkeypatch) -> None:
     pyproject = _project(tmp_path)
     apply_result, _ = _run(

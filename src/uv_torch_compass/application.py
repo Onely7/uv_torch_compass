@@ -381,12 +381,9 @@ class CompassApplication:
             if require_cuda:
                 raise CommandError("nvidia-smi was not found but CUDA is required")
             return None, ("nvidia-smi was not found; CPU remains available",)
-        try:
-            snapshot = inspector.inspect(requested_device)
-        except CommandError as exc:
-            if require_cuda:
-                raise
-            return None, (f"NVIDIA inspection failed; CPU remains available: {exc}",)
+        # Once nvidia-smi is present, invalid hardware data must not be
+        # reinterpreted as a GPU-free host and silently change auto to CPU.
+        snapshot = inspector.inspect(requested_device)
         self.reporter.info(
             f"selected NVIDIA device {snapshot.selected.index}: {snapshot.selected.name}"
         )
