@@ -1,0 +1,75 @@
+name: Build publication artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and verify artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Build wheel and source distribution
+        run: uv build --no-sources
+      - name: Generate the CycloneDX SBOM
+        env:
+          UV_PREVIEW_FEATURES: sbom-export
+        run: |
+          uv export --locked --no-dev --no-emit-project \
+            --format cyclonedx1.5 --output-file dist/sbom.cdx.json
+      - name: Smoke-test the wheel and local uvx invocation
+        run: |
+          wheel_path="$(find dist -name '*.whl' -print -quit)"
+          test -n "$wheel_path"
+          {
+            uvx --refresh --isolated --from "$wheel_path" uv-torch-compass --version
+            uvx --refresh --isolated --from "$wheel_path" uv-torch-compass --help
+            uvx --refresh --isolated --from "$wheel_path" uv-torch-compass plan --help
+            uvx --refresh --isolated --from "$wheel_path" uv-torch-compass apply --help
+            uvx --refresh --isolated --from "$wheel_path" uv-torch-compass check --help
+          } | tee dist/smoke-tests.txt
+      - name: Record build provenance
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          python_version="$(uv run python --version 2>&1)"
+          uv_version="$(uv --version)"
+          jq -n \
+            --arg commit "$BUILD_COMMIT" \
+            --arg python "$python_version" \
+            --arg uv "$uv_version" \
+            --rawfile smoke dist/smoke-tests.txt \
+            '{schema_version: 1, commit: $commit, python: $python, uv: $uv, smoke_tests: $smoke}' \
+            > dist/provenance.json
+      - name: Generate SHA-256 checksums
+        run: |
+          find dist -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 shasum -a 256 \
+            > dist/SHA256SUMS
+      - name: Upload publication-ready artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: uv-torch-compass-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 14

@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+.coverage
+coverage.xml
+.pytest_cache/
+.ruff_cache/
+.ty/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# OS and tool state
+.DS_Store
+.uv-torch-compass/
+.uv-torch-compass.lock
+pyproject.toml.bak.*
+uv.lock.bak.*

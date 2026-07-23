@@ -1,0 +1,254 @@
+import json
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from uv_torch_compass.candidate_probe import CandidateProbeService, build_candidate_plan
+from uv_torch_compass.command_runner import CommandResult, ProcessRunner
+from uv_torch_compass.domain import (
+    BackendCandidate,
+    BackendRequest,
+    Channel,
+    ProjectRequirements,
+    Scope,
+    ScopedRequirement,
+)
+from uv_torch_compass.errors import CommandError
+from uv_torch_compass.nvidia import NvidiaDevice, NvidiaSnapshot
+from uv_torch_compass.reporting import CommandReporter
+from uv_torch_compass.uv_commands import UvCommandClient
+
+
+def _nvidia(cuda_max: str = "12.8") -> NvidiaSnapshot:
+    device = NvidiaDevice("0", "GPU-123", "Test GPU", "570.1")
+    return NvidiaSnapshot((device,), cuda_max, device)
+
+
+def test_auto_orders_uv_auto_compatible_cuda_and_cpu() -> None:
+    plan = build_candidate_plan(
+        BackendRequest.parse("auto"),
+        channel=Channel.STABLE,
+        advertised_backends=("auto", "cpu", "cu130", "cu128", "cu121", "rocm6.2"),
+        nvidia=_nvidia(),
+    )
+
+    assert [candidate.value for candidate in plan.candidates] == [
+        "auto",
+        "cu128",
+        "cu121",
+        "cpu",
+    ]
+
+
+def test_nightly_auto_uses_concrete_candidates_only() -> None:
+    plan = build_candidate_plan(
+        BackendRequest.parse("auto"),
+        channel=Channel.NIGHTLY,
+        advertised_backends=("auto", "cpu", "cu128"),
+        nvidia=_nvidia(),
+    )
+    assert [candidate.value for candidate in plan.candidates] == ["cu128", "cpu"]
+
+
+def test_cuda_policy_requires_visible_nvidia() -> None:
+    with pytest.raises(CommandError, match="visible NVIDIA"):
+        build_candidate_plan(
+            BackendRequest.parse("cuda"),
+            channel=Channel.STABLE,
+            advertised_backends=("cpu", "cu128"),
+            nvidia=None,
+        )
+
+
+def test_candidate_policies_cover_cpu_concrete_and_curated_fallback() -> None:
+    cpu = build_candidate_plan(
+        BackendRequest.parse("cpu"),
+        channel=Channel.STABLE,
+        advertised_backends=(),
+        nvidia=None,
+    )
+    concrete = build_candidate_plan(
+        BackendRequest.parse("cu128"),
+        channel=Channel.STABLE,
+        advertised_backends=("cpu", "cu128"),
+        nvidia=_nvidia(),
+    )
+
+    assert [item.value for item in cpu.candidates] == ["cpu"]
+    assert cpu.warnings
+    assert [item.value for item in concrete.candidates] == ["cu128"]
+    with pytest.raises(CommandError, match="compatible"):
+        build_candidate_plan(
+            BackendRequest.parse("cuda"),
+            channel=Channel.STABLE,
+            advertised_backends=("cu130",),
+            nvidia=_nvidia(),
+        )
+    with pytest.raises(CommandError, match="exceeds"):
+        build_candidate_plan(
+            BackendRequest.parse("cu130"),
+            channel=Channel.STABLE,
+            advertised_backends=("cu130",),
+            nvidia=_nvidia(),
+        )
+
+
+def _report(backend: str = "cpu") -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "backend": backend,
+            "torch_version": "2.7.0",
+            "torchvision_version": "not-installed",
+            "torchaudio_version": "not-installed",
+            "numpy_version": "1.26.4",
+            "cuda_runtime": "none" if backend == "cpu" else "12.8",
+            "gpu_name": "none" if backend == "cpu" else "Fake GPU",
+            "cuda_test": "NOT_APPLICABLE" if backend == "cpu" else "PASS",
+            "numpy_bridge_test": "PASS",
+            "torchvision_test": "NOT_REQUESTED",
+            "torchaudio_test": "NOT_REQUESTED",
+        }
+    )
+
+
+class ProbeUv:
+    diagnostic_timeout_seconds = 30
+    heavy_timeout_seconds = 1800
+
+    def __init__(
+        self,
+        *,
+        create_codes: list[int] | None = None,
+        install_codes: list[int] | None = None,
+        numpy_code: int = 0,
+    ) -> None:
+        self.create_codes = create_codes or [0]
+        self.install_codes = install_codes or [0]
+        self.numpy_code = numpy_code
+
+    def create_venv(self, path: Path, python: Path, *, cwd: Path) -> CommandResult:
+        del path, python, cwd
+        return CommandResult(self.create_codes.pop(0), "", "venv failed")
+
+    def install_candidate(
+        self, path: Path, requirements, candidate, *, dry_run: bool = False
+    ) -> CommandResult:
+        del path, requirements, candidate, dry_run
+        return CommandResult(self.install_codes.pop(0), "", "install failed")
+
+    def install_numpy_lt2(self, path: Path) -> CommandResult:
+        del path
+        return CommandResult(self.numpy_code, "", "repair failed")
+
+
+class ProbeRunner:
+    def __init__(self, results: list[CommandResult]) -> None:
+        self.results = results
+
+    def run(self, arguments, *, cwd=None, env=None, timeout_seconds=None):
+        del arguments, cwd, env, timeout_seconds
+        return self.results.pop(0)
+
+
+class ProbeReporter:
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
+    def info(self, message: str) -> None:
+        del message
+
+    def detail(self, message: str) -> None:
+        del message
+
+    def warn(self, message: str) -> None:
+        self.warnings.append(message)
+
+
+def _service(
+    tmp_path: Path, uv: ProbeUv, runner: ProbeRunner, reporter: ProbeReporter
+) -> CandidateProbeService:
+    scope = Scope("base")
+    requirements = ProjectRequirements(
+        ">=3.10",
+        "",
+        (ScopedRequirement(scope, "torch>=2.6"),),
+        (),
+        (scope,),
+    )
+    return CandidateProbeService(
+        cast(UvCommandClient, uv),
+        cast(ProcessRunner, runner),
+        cast(CommandReporter, reporter),
+        tmp_path,
+        Path("/usr/bin/python3"),
+        requirements,
+        Path("/probe.py"),
+        None,
+    )
+
+
+def test_probe_retries_numpy_and_records_success(tmp_path: Path) -> None:
+    reporter = ProbeReporter()
+    service = _service(
+        tmp_path,
+        ProbeUv(),
+        ProbeRunner(
+            [
+                CommandResult(22, "", "NUMPY_BRIDGE_FAILED: incompatible"),
+                CommandResult(0, _report(), ""),
+            ]
+        ),
+        reporter,
+    )
+
+    outcome = service.find_working_candidate((BackendCandidate("cpu"),))
+
+    assert outcome.numpy_lt2_required
+    assert outcome.attempts[0].passed
+    assert "retrying" in reporter.warnings[0]
+
+
+def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
+    reporter = ProbeReporter()
+    service = _service(
+        tmp_path,
+        ProbeUv(create_codes=[1, 0, 0], install_codes=[1, 0]),
+        ProbeRunner([CommandResult(0, "not-json", "")]),
+        reporter,
+    )
+
+    with pytest.raises(CommandError, match="no usable"):
+        service.find_working_candidate(
+            (
+                BackendCandidate("cu128"),
+                BackendCandidate("cu121"),
+                BackendCandidate("cpu"),
+            )
+        )
+
+    assert any("venv creation" in warning for warning in reporter.warnings)
+    assert any("installation" in warning for warning in reporter.warnings)
+    assert any("valid JSON" in warning for warning in reporter.warnings)
+
+
+def test_probe_does_not_retry_non_numpy_or_failed_repair(tmp_path: Path) -> None:
+    reporter = ProbeReporter()
+    non_numpy = _service(
+        tmp_path,
+        ProbeUv(),
+        ProbeRunner([CommandResult(21, "", "CUDA_RUNTIME_FAILED")]),
+        reporter,
+    )
+    with pytest.raises(CommandError):
+        non_numpy.find_working_candidate((BackendCandidate("cu128"),))
+
+    failed_repair = _service(
+        tmp_path,
+        ProbeUv(numpy_code=1),
+        ProbeRunner([CommandResult(22, "", "NUMPY_BRIDGE_FAILED")]),
+        reporter,
+    )
+    with pytest.raises(CommandError):
+        failed_repair.find_working_candidate((BackendCandidate("cpu"),))

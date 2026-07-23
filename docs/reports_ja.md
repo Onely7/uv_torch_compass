@@ -1,0 +1,90 @@
+# report と自動化
+
+[English](reports.md) · [ドキュメント一覧](README_ja.md) · [CLI の使い方](usage_ja.md)
+
+対話的に使う場合の初期値は text です。JSON では script や CI が扱える最終 object を一つ返します。
+
+## text 出力
+
+進捗は `INSPECT`、`RESOLVE`、`VERIFY`、`APPLY`、`RESTORE` という phase 名で表示します。補足情報、警告、最終 summary から、選択 backend、公式 index、変更、backup、log を確認できます。
+
+`plan` の summary には、`pyproject.toml` の前後行を含まない unified diff を表示します。`apply` の前に確認してください。
+
+## JSON 出力
+
+`--output-format json` を指定します。
+
+```bash
+uv-torch-compass plan --output-format json > result.json
+```
+
+stdout には最後の JSON object 一つだけを出します。進捗と警告は stderr へ送るため、stdout の redirect から解析可能な文書を得られます。
+
+schema version は `1` で、次の top-level field を含みます。
+
+```json
+{
+  "schema_version": 1,
+  "operation": "plan",
+  "status": "planned",
+  "exit_code": 0,
+  "applied": false,
+  "target": "/work/app/pyproject.toml",
+  "workspace": "/work/app",
+  "request": {},
+  "python": {},
+  "candidate_attempts": [],
+  "selected_backend": "cpu",
+  "selected_index": "https://download.pytorch.org/whl/cpu",
+  "selected_gpu": null,
+  "resolved_packages": {},
+  "validation": {},
+  "changes": [],
+  "backups": [],
+  "warnings": [],
+  "errors": [],
+  "timing": {}
+}
+```
+
+実際の文書には、対象 package、変更案の diff、実行 log、秘密情報を含まない診断 metadata も入ります。候補の詳細には backend、成否、マスク済みの要約を記録し、生の command data は残しません。
+
+status は次のいずれかです。
+
+| status | 意味 |
+| --- | --- |
+| `planned` | 候補検証に成功し、読み取り専用で変更案を作った |
+| `success` | 変更と最終検証に成功した |
+| `success_with_warnings` | 致命的ではない警告を伴って変更と検証に成功した |
+| `valid` | `check` で記録済み状態が新しく、実行可能だった |
+| `failed` | 設定、command、検証、復旧のいずれかに失敗した |
+
+JSON 指定を認識できた場合、設定・runtime の失敗も同じ schema と終了コード `1` で返します。argparse が解析できない構文エラーは JSON 契約を確立できないため、stderr と終了コード `2` で報告します。
+
+## report file
+
+`--report-file` は、terminal の出力形式と関係なく同じ最終 JSON を保存します。
+
+```bash
+uv-torch-compass apply \
+  --output-format text \
+  --report-file artifacts/torch-compass.json
+```
+
+相対パスは対象 project から解決します。同じ directory の一時ファイルを使って書きかけを残さず置換し、mode `0600` を設定します。指定した report を書けない場合は、欠落したまま成功にせず command 自体を失敗させます。
+
+## 認証情報の扱い
+
+text が log、diff、JSON、report へ入る前に、共通 redactor が URL の user 情報、query 内の token・key・password・secret・signature、authorization header、秘密値らしい変数代入を除去します。子 process の環境変数は値を記録せず、除外した制御変数の名前だけを記録する場合があります。
+
+redaction があるからといって、log を無確認で公開してよいわけではありません。ローカルパス、package version、GPU 名、一般的ではない形式の認証情報が機密になる場合があるため、共有前に内容を確認してください。
+
+## CI の例
+
+```bash
+set -o pipefail
+uv-torch-compass check --output-format json --report-file compass.json \
+  | jq -e '.status == "valid"'
+```
+
+成否の第一判断には process の終了コードを使い、構造化した報告には `status`、`warnings`、`errors` を確認します。

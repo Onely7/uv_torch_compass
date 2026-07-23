@@ -1,0 +1,155 @@
+import json
+import stat
+from pathlib import Path
+
+import pytest
+
+from uv_torch_compass.domain import (
+    BackendCandidate,
+    BackendRequest,
+    Channel,
+    CommandOutcome,
+    Operation,
+    OutputFormat,
+    RunOptions,
+    RuntimeReport,
+)
+from uv_torch_compass.errors import ProjectUpdateError, ReportError
+from uv_torch_compass.reporting import CommandReporter, redact
+from uv_torch_compass.workspace import WorkspaceContext
+
+
+def test_redaction_removes_url_and_header_credentials() -> None:
+    value = (
+        "https://user:password@example.invalid/simple?token=secret\n"
+        "Authorization: Bearer abc123\n"
+        "UV_INDEX_TOKEN=top-secret\n"
+    )
+    redacted = redact(value)
+    assert "password" not in redacted
+    assert "secret" not in redacted
+    assert "abc123" not in redacted
+    assert "top-secret" not in redacted
+    assert "<redacted>" in redacted
+
+
+def test_json_report_is_single_document_and_private(tmp_path: Path, capsys) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\n", encoding="utf-8")
+    report_file = tmp_path / "artifacts" / "result.json"
+    options = RunOptions(
+        operation=Operation.PLAN,
+        pyproject=pyproject,
+        python_request="",
+        requirement_overrides=(),
+        backend=BackendRequest.parse("cpu"),
+        channel=Channel.STABLE,
+        extras=(),
+        groups=(),
+        cuda_device=None,
+        link_mode="copy",
+        log_dir=tmp_path / "logs",
+        timeout_seconds=1800,
+        output_format=OutputFormat.JSON,
+        report_file=report_file,
+    )
+    reporter = CommandReporter(options, "0.1.0")
+    with reporter:
+        reporter.phase("inspect", "https://user:secret@example.invalid/simple")
+        reporter.warn("warning")
+        reporter.emit_final(
+            CommandOutcome("planned", False, None, changes=("one change",)),
+            None,
+            exit_code=0,
+        )
+
+    captured = capsys.readouterr()
+    document = json.loads(captured.out)
+    assert document["status"] == "planned"
+    assert document["changes"] == ["one change"]
+    assert "secret" not in captured.err
+    assert json.loads(report_file.read_text(encoding="utf-8")) == document
+    assert stat.S_IMODE(report_file.stat().st_mode) == 0o600
+    assert stat.S_IMODE(reporter.log_path.stat().st_mode) == 0o600
+
+
+def _text_options(tmp_path: Path, report_file: Path | None = None) -> RunOptions:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project]\n", encoding="utf-8")
+    return RunOptions(
+        operation=Operation.APPLY,
+        pyproject=pyproject,
+        python_request="3.12",
+        requirement_overrides=(),
+        backend=BackendRequest.parse("cpu"),
+        channel=Channel.STABLE,
+        extras=("vision",),
+        groups=("training",),
+        cuda_device=None,
+        link_mode="copy",
+        log_dir=tmp_path / "logs",
+        timeout_seconds=1800,
+        output_format=OutputFormat.TEXT,
+        report_file=report_file,
+    )
+
+
+def test_text_report_prints_selection_diff_error_and_workspace(
+    tmp_path: Path, capsys
+) -> None:
+    options = _text_options(tmp_path)
+    runtime = RuntimeReport(
+        1,
+        BackendCandidate("cpu"),
+        "2.7.0",
+        "0.22.0",
+        "not-installed",
+        "2.2.0",
+        "none",
+        "none",
+        "NOT_APPLICABLE",
+        "PASS",
+        "PASS",
+        "NOT_REQUESTED",
+    )
+    workspace = WorkspaceContext(tmp_path, tmp_path, None, tmp_path / "uv.lock", False)
+    reporter = CommandReporter(options, "0.1.0")
+    with reporter:
+        reporter.ok("verified")
+        reporter.emit_final(
+            CommandOutcome(
+                "failed",
+                False,
+                runtime,
+                planned_diff="@@ planned @@",
+                changes=("changed source",),
+            ),
+            workspace,
+            exit_code=1,
+            error="failed safely",
+        )
+
+    captured = capsys.readouterr()
+    assert "Backend: cpu" in captured.out
+    assert "Planned pyproject.toml diff" in captured.out
+    assert "failed safely" in captured.err
+
+
+def test_reporter_requires_context_and_wraps_atomic_write_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    report_file = tmp_path / "report.json"
+    reporter = CommandReporter(_text_options(tmp_path, report_file), "0.1.0")
+    with pytest.raises(ReportError, match="opened"):
+        _ = reporter.log_path
+
+    def fail_write(_path: Path, _content: str) -> None:
+        raise ProjectUpdateError("disk failure")
+
+    monkeypatch.setattr("uv_torch_compass.reporting.atomic_write_private", fail_write)
+    with reporter, pytest.raises(ReportError, match="could not write report"):
+        reporter.emit_final(
+            CommandOutcome("failed", False, None),
+            None,
+            exit_code=1,
+        )

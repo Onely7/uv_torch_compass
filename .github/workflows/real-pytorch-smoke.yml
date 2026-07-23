@@ -1,0 +1,39 @@
+name: Real PyTorch CPU smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu-smoke:
+    name: Verify a real CPU wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Synchronize the tool
+        run: uv sync --locked
+      - name: Create a temporary target project
+        run: |
+          mkdir -p "$RUNNER_TEMP/torch-target"
+          cp tests/fixtures/real-pytorch-pyproject.toml \
+            "$RUNNER_TEMP/torch-target/pyproject.toml"
+      - name: Detect and verify the CPU backend
+        run: |
+          uv run uv-torch-compass apply \
+            --pyproject "$RUNNER_TEMP/torch-target/pyproject.toml" \
+            --backend cpu

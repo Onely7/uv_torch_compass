@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.11"
+          - "3.12"
+          - "3.13"
+          - "3.14"
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run behavior tests
+        run: uv run pytest
+
+  quality:
+    name: Quality and package checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Synchronize locked dependencies
+        run: uv sync --locked --all-groups
+      - name: Run pre-commit checks
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+      - name: Run the type checker
+        run: uv run ty check
+      - name: Build standard distributions
+        run: uv build --no-sources
+      - name: Verify the wheel through uvx
+        run: |
+          wheel_path="$(find dist -name '*.whl' -print -quit)"
+          test -n "$wheel_path"
+          uvx --refresh --isolated --from "$wheel_path" uv-torch-compass --help
+          uvx --refresh --isolated --from "$wheel_path" uv-torch-compass --version
+
+  wheel-smoke:
+    name: Wheel smoke (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.14"
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      - name: Build distributions
+        run: uv build --no-sources
+      - name: Install and invoke the isolated wheel
+        run: |
+          wheel_path="$(find dist -name '*.whl' -print -quit)"
+          test -n "$wheel_path"
+          uvx --refresh --isolated --python "${{ matrix.python-version }}" \
+            --from "$wheel_path" uv-torch-compass --help
+          uvx --refresh --isolated --python "${{ matrix.python-version }}" \
+            --from "$wheel_path" uv-torch-compass --version

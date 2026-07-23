@@ -1,0 +1,41 @@
+"""Application-specific exceptions exposed at internal layer boundaries."""
+
+
+class CompassError(Exception):
+    """Base class for recoverable uv-torch-compass failures."""
+
+
+class ConfigurationError(CompassError):
+    """Indicate invalid CLI, environment, or project configuration."""
+
+
+class CommandError(CompassError):
+    """Indicate that a required external command could not be executed."""
+
+
+class CommandTimeoutError(CommandError):
+    """Indicate that an external command exceeded its configured deadline."""
+
+
+class ProbeError(CompassError):
+    """Indicate that a backend runtime probe returned unusable data."""
+
+
+class ProjectUpdateError(CompassError):
+    """Indicate that project files could not be updated or restored safely."""
+
+
+class ConcurrentRunError(ProjectUpdateError):
+    """Indicate another mutating command already owns the workspace lock."""
+
+
+class ExternalModificationError(ProjectUpdateError):
+    """Indicate that a tracked project file changed outside the transaction."""
+
+
+class ReportError(CompassError):
+    """Indicate that a log or machine-readable report could not be written."""
+
+
+class TerminationRequested(CompassError):
+    """Indicate that SIGTERM requested rollback and command termination."""
