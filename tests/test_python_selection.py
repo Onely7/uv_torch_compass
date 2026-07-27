@@ -41,6 +41,8 @@ class VersionRunner:
                     "version": self.versions.pop(0),
                     "implementation_name": "cpython",
                     "platform_implementation": "CPython",
+                    "sys_platform": "linux",
+                    "platform_machine": "x86_64",
                 }
             ),
             "",
@@ -77,6 +79,8 @@ def test_python_file_request_falls_back_when_resolved_version_is_incompatible(
     assert uv.requests == ["cpython3.9", ">=3.10,<3.15"]
     assert selected.version == "3.12.13"
     assert selected.implementation_name == "cpython"
+    assert selected.sys_platform == "linux"
+    assert selected.platform_machine == "x86_64"
     assert ".python-version" in selected.warnings[0]
 
 

@@ -7,7 +7,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
+from uv_torch_compass.candidate_lock import read_candidate_lock
 from uv_torch_compass.candidate_project import render_candidate_project
+from uv_torch_compass.candidate_resolution import CandidateResolution
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
@@ -70,6 +73,7 @@ class CandidateProbeService:
     compatibility_policy: CompatibilityPolicy
     probe_profile: ProbeProfile
     target_pyproject: Path
+    execution_environment: CandidateExecutionEnvironment
     workspace_members: tuple[tuple[str, Path], ...] = ()
     framework_probes: tuple[FrameworkProbe, ...] = ()
 
@@ -94,15 +98,12 @@ class CandidateProbeService:
                 attempts.append(
                     CandidateAttempt(
                         candidate.value,
-                        (
-                            "runtime"
-                            if failure.kind.value == "runtime-validation"
-                            else "install"
-                        ),
+                        result.stage,
                         "failed",
                         failure.summary,
                         self._compatibility_for(candidate).level.value,
                         failure,
+                        result.resolution,
                     )
                 )
                 continue
@@ -114,6 +115,7 @@ class CandidateProbeService:
                     "passed",
                     f"resolved as {outcome.runtime.backend.value}",
                     outcome.compatibility.level.value,
+                    resolution=outcome.resolution,
                 )
             )
             if outcome.compatibility.level is CompatibilityLevel.MINOR:
@@ -126,6 +128,7 @@ class CandidateProbeService:
                 outcome.installed_pytorch,
                 outcome.source_anchors,
                 outcome.framework_validation,
+                outcome.resolution,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CandidateResolutionError(
@@ -147,19 +150,59 @@ class CandidateProbeService:
                 destination=candidate_root / "project",
                 requirements=self.requirements.probe_requirements,
                 candidate=candidate,
+                environment=self.execution_environment,
                 workspace_members=dict(self.workspace_members),
             )
-            installed = self.uv.sync_candidate(
+            locked = self.uv.lock_candidate(
+                project.parent,
+                self.project_python,
+            )
+        except CommandTimeoutError:
+            return CandidateProbeResult.failed(
+                timeout_failure("dependency resolution"),
+                stage="lock",
+            )
+        except ConfigurationError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return CandidateProbeResult.failed(
+                runtime_failure("The candidate source policy could not be prepared."),
+                stage="lock",
+            )
+        self.reporter.detail(locked.stdout + locked.stderr)
+        if locked.returncode != 0:
+            self.reporter.warn(
+                f"candidate {candidate.value}: dependency resolution failed"
+            )
+            return CandidateProbeResult.failed(
+                interpret_uv_failure(
+                    locked.stdout + locked.stderr,
+                    candidate=candidate,
+                    dependency_roots=self.requirements.probe_requirements,
+                ),
+                stage="lock",
+            )
+        try:
+            resolution = CandidateResolution(
+                candidate,
+                self.execution_environment,
+                read_candidate_lock(project.parent / "uv.lock"),
+            )
+            installed = self.uv.sync_locked_candidate(
                 venv,
                 project.parent,
                 self.project_python,
             )
         except CommandTimeoutError:
-            return CandidateProbeResult.failed(timeout_failure("installation"))
-        except ConfigurationError as exc:
+            return CandidateProbeResult.failed(
+                timeout_failure("installation"),
+                resolution,
+                stage="install",
+            )
+        except (ConfigurationError, ProbeError) as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return CandidateProbeResult.failed(
-                runtime_failure("The candidate source policy could not be prepared.")
+                runtime_failure("The candidate lockfile could not be validated."),
+                stage="lock",
             )
         self.reporter.detail(installed.stdout + installed.stderr)
         if installed.returncode != 0:
@@ -169,7 +212,9 @@ class CandidateProbeService:
                     installed.stdout + installed.stderr,
                     candidate=candidate,
                     dependency_roots=self.requirements.probe_requirements,
-                )
+                ),
+                resolution,
+                stage="install",
             )
 
         try:
@@ -182,14 +227,18 @@ class CandidateProbeService:
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return CandidateProbeResult.failed(
-                runtime_failure("Installed package metadata could not be validated.")
+                runtime_failure("Installed package metadata could not be validated."),
+                resolution,
+                stage="install",
             )
         if "torch" not in installed_pytorch:
             self.reporter.warn(
                 f"candidate {candidate.value}: selected dependencies do not install torch"
             )
             return CandidateProbeResult.failed(
-                runtime_failure("The selected dependencies did not install torch.")
+                runtime_failure("The selected dependencies did not install torch."),
+                resolution,
+                stage="install",
             )
 
         contract = ProbeContract.for_installed_packages(
@@ -204,15 +253,18 @@ class CandidateProbeService:
                 False,
                 contract,
                 installed_distributions,
+                resolution,
             )
-            return self._finalize_candidate(venv, candidate, outcome)
+            return self._finalize_candidate(venv, candidate, outcome, resolution)
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
             self.reporter.warn(
                 f"candidate {candidate.value}: runtime validation failed"
             )
             return CandidateProbeResult.failed(
-                runtime_failure("The candidate runtime validation failed.")
+                runtime_failure("The candidate runtime validation failed."),
+                resolution,
+                stage="runtime",
             )
 
         self.reporter.warn(
@@ -224,7 +276,9 @@ class CandidateProbeService:
             return CandidateProbeResult.failed(
                 runtime_failure(
                     "The NumPy compatibility repair could not be installed."
-                )
+                ),
+                resolution,
+                stage="install",
             )
         validation = self._run_probe(venv, candidate, contract)
         self.reporter.detail(validation.stdout + validation.stderr)
@@ -232,7 +286,9 @@ class CandidateProbeService:
             return CandidateProbeResult.failed(
                 runtime_failure(
                     "The candidate failed after the NumPy compatibility repair."
-                )
+                ),
+                resolution,
+                stage="runtime",
             )
         outcome = self._parse_success(
             validation.stdout,
@@ -240,20 +296,24 @@ class CandidateProbeService:
             True,
             contract,
             installed_distributions,
+            resolution,
         )
-        return self._finalize_candidate(venv, candidate, outcome)
+        return self._finalize_candidate(venv, candidate, outcome, resolution)
 
     def _finalize_candidate(
         self,
         venv: Path,
         candidate: BackendCandidate,
         outcome: ProbeOutcome | None,
+        resolution: CandidateResolution,
     ) -> CandidateProbeResult:
         if outcome is None:
             return CandidateProbeResult.failed(
-                runtime_failure("The candidate runtime validation failed.")
+                runtime_failure("The candidate runtime validation failed."),
+                resolution,
+                stage="runtime",
             )
-        framework_probes = self._framework_probes(venv, candidate)
+        framework_probes = self._framework_probes(venv, candidate, resolution)
         if isinstance(framework_probes, CandidateProbeResult):
             return framework_probes
         return CandidateProbeResult.passed(
@@ -265,6 +325,7 @@ class CandidateProbeService:
                 outcome.installed_pytorch,
                 outcome.source_anchors,
                 framework_probes,
+                resolution,
             )
         )
 
@@ -272,6 +333,7 @@ class CandidateProbeService:
         self,
         venv: Path,
         candidate: BackendCandidate,
+        resolution: CandidateResolution,
     ) -> tuple[FrameworkValidation, ...] | CandidateProbeResult:
         requested = self.framework_probes
         if not requested:
@@ -292,16 +354,26 @@ class CandidateProbeService:
                 timeout_seconds=self.uv.diagnostic_timeout_seconds,
             )
         except CommandTimeoutError:
-            return CandidateProbeResult.failed(timeout_failure("framework validation"))
+            return CandidateProbeResult.failed(
+                timeout_failure("framework validation"),
+                resolution,
+                stage="framework",
+            )
         self.reporter.detail(result.stdout + result.stderr)
         try:
             validations = parse_framework_probe(result.stdout, requested)
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
-            return CandidateProbeResult.failed(runtime_failure(str(exc)))
+            return CandidateProbeResult.failed(
+                runtime_failure(str(exc)),
+                resolution,
+                stage="framework",
+            )
         if result.returncode != 0:
             return CandidateProbeResult.failed(
-                runtime_failure("The candidate framework validation failed.")
+                runtime_failure("The candidate framework validation failed."),
+                resolution,
+                stage="framework",
             )
         self.reporter.detail(str(framework_validation_document(validations)))
         return validations
@@ -343,6 +415,7 @@ class CandidateProbeService:
         numpy_lt2_required: bool,
         contract: ProbeContract,
         installed_distributions: tuple[InstalledDistribution, ...],
+        resolution: CandidateResolution,
     ) -> ProbeOutcome | None:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
@@ -387,6 +460,8 @@ class CandidateProbeService:
                 installed_distributions,
                 self.requirements,
             ),
+            (),
+            resolution,
         )
 
     def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:

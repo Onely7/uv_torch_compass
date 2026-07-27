@@ -50,14 +50,31 @@ def test_client_discovers_backend_values_and_sanitizes_environment() -> None:
     assert timeout == 30
 
 
-def test_client_builds_isolated_candidate_sync_command(tmp_path: Path) -> None:
+def test_client_builds_isolated_candidate_lock_and_sync_commands(
+    tmp_path: Path,
+) -> None:
     runner = RecordingRunner()
     client = _client(runner)
     venv = tmp_path / "venv"
     project = tmp_path / "candidate"
     python = Path("/usr/bin/python3")
 
-    client.sync_candidate(venv, project, python)
+    client.lock_candidate(project, python)
+
+    arguments, cwd, environment, timeout = runner.calls[-1]
+    assert arguments == [
+        "/usr/bin/uv",
+        "lock",
+        "--project",
+        str(project),
+        "--python",
+        str(python),
+    ]
+    assert cwd == project
+    assert "UV_PROJECT_ENVIRONMENT" not in environment
+    assert timeout == 1800
+
+    client.sync_locked_candidate(venv, project, python)
 
     arguments, cwd, environment, timeout = runner.calls[-1]
     assert arguments == [
@@ -69,6 +86,7 @@ def test_client_builds_isolated_candidate_sync_command(tmp_path: Path) -> None:
         str(python),
         "--no-install-project",
         "--no-dev",
+        "--locked",
     ]
     assert cwd == project
     assert environment["UV_PROJECT_ENVIRONMENT"] == str(venv)

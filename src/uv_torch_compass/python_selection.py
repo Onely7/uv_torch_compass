@@ -25,6 +25,8 @@ class ResolvedPython:
     version: str
     implementation_name: str
     platform_implementation: str
+    sys_platform: str
+    platform_machine: str
     warnings: tuple[str, ...]
 
 
@@ -61,9 +63,13 @@ class PythonSelector:
 
         for position, request in enumerate(dict.fromkeys(requests)):
             executable = self._resolve_request(request, project_dir)
-            version, implementation_name, platform_implementation = (
-                self._inspect_version(executable)
-            )
+            (
+                version,
+                implementation_name,
+                platform_implementation,
+                sys_platform,
+                platform_machine,
+            ) = self._inspect_version(executable)
             if Version(version) in SpecifierSet(requirements.requires_python):
                 if not has_upper_bound(requirements.requires_python):
                     warnings.append(
@@ -76,6 +82,8 @@ class PythonSelector:
                     version,
                     implementation_name,
                     platform_implementation,
+                    sys_platform,
+                    platform_machine,
                     tuple(warnings),
                 )
             if explicit_request or position == len(requests) - 1:
@@ -114,7 +122,10 @@ class PythonSelector:
             raise CommandError(f"resolved Python path does not exist: {path}")
         return path
 
-    def _inspect_version(self, executable: Path) -> tuple[str, str, str]:
+    def _inspect_version(
+        self,
+        executable: Path,
+    ) -> tuple[str, str, str, str, str]:
         environment, _ = sanitized_environment(os.environ)
         result = self.runner.run(
             [
@@ -123,7 +134,9 @@ class PythonSelector:
                 "import json, platform, sys; "
                 "print(json.dumps({'version': platform.python_version(), "
                 "'implementation_name': sys.implementation.name, "
-                "'platform_implementation': platform.python_implementation()}))",
+                "'platform_implementation': platform.python_implementation(), "
+                "'sys_platform': sys.platform, "
+                "'platform_machine': platform.machine()}))",
             ],
             env=environment,
             timeout_seconds=30,
@@ -135,15 +148,29 @@ class PythonSelector:
             version = value["version"]
             implementation_name = value["implementation_name"]
             platform_implementation = value["platform_implementation"]
+            sys_platform = value["sys_platform"]
+            platform_machine = value["platform_machine"]
             if not all(
                 isinstance(item, str) and item
-                for item in (version, implementation_name, platform_implementation)
+                for item in (
+                    version,
+                    implementation_name,
+                    platform_implementation,
+                    sys_platform,
+                    platform_machine,
+                )
             ):
                 raise TypeError
             Version(version)
         except (json.JSONDecodeError, KeyError, TypeError, InvalidVersion) as exc:
             raise CommandError("resolved Python returned an invalid version") from exc
-        return version, implementation_name, platform_implementation
+        return (
+            version,
+            implementation_name,
+            platform_implementation,
+            sys_platform,
+            platform_machine,
+        )
 
 
 def _command_failure(message: str, output: str) -> str:

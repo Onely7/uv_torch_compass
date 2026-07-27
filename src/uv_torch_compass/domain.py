@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -20,6 +20,9 @@ from uv_torch_compass.cuda_compatibility import (
     CompatibilityPolicy,
 )
 from uv_torch_compass.errors import ConfigurationError, ProbeError
+
+if TYPE_CHECKING:
+    from uv_torch_compass.candidate_resolution import CandidateResolution
 
 _CUDA_BACKEND_PATTERN = re.compile(r"cu[0-9]{2,3}", re.ASCII)
 _GPU_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9_.:-]+", re.ASCII)
@@ -571,6 +574,7 @@ class CandidateAttempt:
     reason: str
     compatibility: str
     failure: ResolutionFailure | None = None
+    resolution: CandidateResolution | None = None
 
 
 class ResolutionFailureKind(str, Enum):

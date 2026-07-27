@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.backend_selection import build_candidate_plan
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
 from uv_torch_compass.candidate_probe import CandidateProbeService
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.cuda_compatibility import (
@@ -174,6 +175,12 @@ class CompassApplication:
                 compatibility_policy=self.options.cuda_compatibility,
                 probe_profile=self.options.probe_profile,
                 target_pyproject=self.options.pyproject,
+                execution_environment=CandidateExecutionEnvironment(
+                    python.version,
+                    python.implementation_name,
+                    python.sys_platform,
+                    python.platform_machine,
+                ),
                 workspace_members=workspace.members,
                 framework_probes=self.options.framework_probes,
             )

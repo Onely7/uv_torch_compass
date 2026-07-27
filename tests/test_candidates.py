@@ -5,6 +5,7 @@ from typing import cast
 import pytest
 
 from uv_torch_compass.backend_selection import build_candidate_plan
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
 from uv_torch_compass.candidate_probe import CandidateProbeService
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
@@ -209,7 +210,30 @@ class ProbeUv:
         self.numpy_code = numpy_code
         self.install_error = install_error
 
-    def sync_candidate(
+    def lock_candidate(
+        self,
+        project_dir: Path,
+        python: Path,
+    ) -> CommandResult:
+        del python
+        (project_dir / "uv.lock").write_text(
+            """
+version = 1
+[[package]]
+name = "uv-torch-compass-candidate"
+version = "0"
+dependencies = [{ name = "torch" }]
+[[package]]
+name = "torch"
+version = "2.7.0"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        return CommandResult(0, "", "")
+
+    def sync_locked_candidate(
         self,
         path: Path,
         project_dir: Path,
@@ -279,6 +303,7 @@ def _service(
         CompatibilityPolicy.STRICT,
         ProbeProfile.STANDARD,
         target,
+        CandidateExecutionEnvironment("3.12.12", "cpython", "linux", "x86_64"),
     )
 
 
@@ -343,13 +368,13 @@ def test_probe_currently_does_not_auto_validate_installed_vllm(tmp_path: Path) -
     """Characterize the explicit-only framework probe contract."""
 
     class VllmUv(ProbeUv):
-        def sync_candidate(
+        def sync_locked_candidate(
             self,
             path: Path,
             project_dir: Path,
             python: Path,
         ) -> CommandResult:
-            result = super().sync_candidate(path, project_dir, python)
+            result = super().sync_locked_candidate(path, project_dir, python)
             metadata = path / "lib/python/site-packages/vllm-0.19.1.dist-info/METADATA"
             metadata.parent.mkdir(parents=True, exist_ok=True)
             metadata.write_text("Name: vllm\nVersion: 0.19.1\n", encoding="utf-8")
@@ -440,6 +465,9 @@ def test_install_failure_preserves_structured_resolution_context(
     assert len(attempts) == 1
     failure = attempts[0].failure
     assert failure is not None
+    assert attempts[0].stage == "install"
+    assert attempts[0].resolution is not None
+    assert attempts[0].resolution.pytorch_packages[0].version == "2.7.0"
     assert failure.package is not None
     assert failure.package.name == "torch"
     assert failure.index is not None
@@ -450,13 +478,12 @@ def test_install_timeout_is_preserved_as_candidate_diagnostic(
     tmp_path: Path,
 ) -> None:
     class TimeoutUv(ProbeUv):
-        def sync_candidate(
+        def lock_candidate(
             self,
-            path: Path,
             project_dir: Path,
             python: Path,
         ) -> CommandResult:
-            del path, project_dir, python
+            del project_dir, python
             raise CommandTimeoutError("timed out")
 
     service = _service(
@@ -499,13 +526,13 @@ def test_transitive_torchaudio_uses_the_installed_probe_contract(
     tmp_path: Path,
 ) -> None:
     class TransitiveAudioUv(ProbeUv):
-        def sync_candidate(
+        def sync_locked_candidate(
             self,
             path: Path,
             project_dir: Path,
             python: Path,
         ) -> CommandResult:
-            result = super().sync_candidate(path, project_dir, python)
+            result = super().sync_locked_candidate(path, project_dir, python)
             metadata = (
                 path / "lib/python/site-packages/torchaudio-2.7.0.dist-info/METADATA"
             )
