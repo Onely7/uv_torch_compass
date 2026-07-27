@@ -218,7 +218,7 @@ def test_render_preserves_comments_guards_old_sources_and_is_idempotent(
     document = tomlkit.parse(first).unwrap()
     assert first == second
     assert "# retained comment" in first
-    assert "sys_platform != 'linux'" in first
+    assert 'sys_platform != \\"linux\\"' in first
     assert document["project"]["dependencies"].count("torch>=2.6") == 1
     assert "numpy<2; sys_platform == 'linux'" in document["project"]["dependencies"]
     assert set(document["tool"]["uv"]["sources"]) == {
@@ -350,7 +350,7 @@ def test_overlapping_exact_versions_are_rejected(tmp_path: Path) -> None:
         read_project_requirements(pyproject, extras=(), groups=(), overrides=())
 
 
-def test_exact_override_currently_conflicts_with_the_original_requirement(
+def test_exact_override_replaces_the_original_requirement(
     tmp_path: Path,
 ) -> None:
     pyproject = tmp_path / "pyproject.toml"
@@ -364,10 +364,47 @@ def test_exact_override_currently_conflicts_with_the_original_requirement(
         """,
     )
 
-    with pytest.raises(ConfigurationError, match="conflicting exact"):
-        read_project_requirements(
-            pyproject,
-            extras=(),
-            groups=(),
-            overrides=("torch==2.10.0",),
-        )
+    requirements = read_project_requirements(
+        pyproject,
+        extras=(),
+        groups=(),
+        overrides=("torch==2.10.0",),
+    )
+
+    assert str(requirements.requirement_for("torch")[0]) == "torch==2.10.0"
+
+
+def test_source_marker_with_non_linux_or_branch_is_still_guarded(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["torch"]
+
+        [tool.uv.sources]
+        torch = [
+            { index = "old", marker = "sys_platform != 'linux' or python_version < '3.12'" },
+        ]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    )
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cpu"),
+        numpy_lt2_required=False,
+    )
+
+    assert (
+        '(sys_platform != \\"linux\\" or python_version < \\"3.12\\") '
+        'and sys_platform != \\"linux\\"'
+    ) in content

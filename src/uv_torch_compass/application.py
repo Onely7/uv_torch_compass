@@ -41,6 +41,7 @@ from uv_torch_compass.project_metadata import (
     render_project_configuration,
 )
 from uv_torch_compass.python_selection import PythonSelector, ResolvedPython
+from uv_torch_compass.report_destination import preflight_report_destination
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.safe_transaction import (
     SafeProjectTransaction,
@@ -69,6 +70,11 @@ class CompassApplication:
         self._preflight()
         self.reporter.phase("inspect", "reading the target project and workspace")
         workspace = resolve_workspace(self.options.pyproject, self.uv)
+        preflight_report_destination(
+            self.options,
+            workspace,
+            log_path=self.reporter.log_path,
+        )
         initial_state = TargetState.capture(workspace)
         requirements = read_project_requirements(
             self.options.pyproject,
@@ -449,6 +455,15 @@ class CompassApplication:
             expected_profile=self.options.probe_profile,
             require_native_architecture=(
                 compatibility.level is CompatibilityLevel.MINOR
+            ),
+            expected_packages=frozenset(
+                package
+                for package, version in (
+                    ("torch", report.torch_version),
+                    ("torchvision", report.torchvision_version),
+                    ("torchaudio", report.torchaudio_version),
+                )
+                if version != "not-installed"
             ),
         )
         return report

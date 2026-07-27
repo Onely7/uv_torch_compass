@@ -174,13 +174,8 @@ class CandidateProbeService:
                 runtime_failure("The selected dependencies did not install torch.")
             )
 
-        contract = ProbeContract(
+        contract = ProbeContract.for_installed_packages(
             installed_pytorch,
-            frozenset(
-                package
-                for package in ("torch", "torchvision", "torchaudio")
-                if self.requirements.has_package(package)
-            ),
             self.probe_profile,
         )
         validation = self._run_probe(venv, candidate, contract)

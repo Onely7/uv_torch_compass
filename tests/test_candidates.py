@@ -423,7 +423,7 @@ def test_probe_does_not_retry_non_numpy_or_failed_repair(tmp_path: Path) -> None
         failed_repair.find_working_candidate((BackendCandidate("cpu"),))
 
 
-def test_transitive_torchaudio_currently_conflicts_with_direct_expectations(
+def test_transitive_torchaudio_uses_the_installed_probe_contract(
     tmp_path: Path,
 ) -> None:
     class TransitiveAudioUv(ProbeUv):
@@ -458,5 +458,7 @@ def test_transitive_torchaudio_currently_conflicts_with_direct_expectations(
         (scope,),
     )
 
-    with pytest.raises(CandidateResolutionError):
-        service.find_working_candidate((BackendCandidate("cpu"),))
+    outcome = service.find_working_candidate((BackendCandidate("cpu"),))
+
+    assert outcome.runtime.torchaudio_test == "PASS"
+    assert outcome.installed_pytorch == frozenset({"torch", "torchaudio"})

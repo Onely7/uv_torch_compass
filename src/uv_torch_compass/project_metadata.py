@@ -122,7 +122,11 @@ def read_project_requirements(
             parsed.append(_scoped_requirement(scope, "torch"))
         selected.extend(parsed)
 
-    all_pytorch = _read_all_pytorch(project, optional, dependency_groups)
+    all_pytorch = _read_all_pytorch(
+        scope_values[0][1],
+        optional,
+        dependency_groups,
+    )
     _reject_conflicting_exact_versions((*selected, *all_pytorch))
     return ProjectRequirements(
         requires_python=requires_python,
@@ -364,10 +368,24 @@ def _scoped_requirement(scope: Scope, raw: str) -> ScopedRequirement:
 def _apply_requirement_overrides(
     values: Iterable[object], overrides: Mapping[str, str]
 ) -> list[str]:
+    materialized = [str(value) for value in values]
+    counts: dict[str, int] = {}
+    for text in materialized:
+        try:
+            package = str(canonicalize_name(Requirement(text).name))
+        except InvalidRequirement:
+            continue
+        counts[package] = counts.get(package, 0) + 1
+    ambiguous = sorted(package for package in overrides if counts.get(package, 0) > 1)
+    if ambiguous:
+        raise ConfigurationError(
+            "dependency overrides are ambiguous for repeated base requirements: "
+            + ", ".join(ambiguous)
+        )
+
     remaining = dict(overrides)
     updated: list[str] = []
-    for raw in values:
-        text = str(raw)
+    for text in materialized:
         try:
             package = canonicalize_name(Requirement(text).name)
         except InvalidRequirement:
@@ -379,7 +397,7 @@ def _apply_requirement_overrides(
 
 
 def _read_all_pytorch(
-    project: Mapping[str, object],
+    base: Iterable[str],
     optional: Mapping[str, object],
     groups: Mapping[str, object],
 ) -> list[ScopedRequirement]:
@@ -387,7 +405,7 @@ def _read_all_pytorch(
     scope_arrays: list[tuple[Scope, list[str]]] = [
         (
             Scope("base"),
-            _string_array(project.get("dependencies", []), "[project].dependencies"),
+            list(base),
         )
     ]
     scope_arrays.extend(
@@ -666,9 +684,43 @@ def _guard_non_linux(marker: str) -> str:
         normalized = str(Marker(marker))
     except InvalidMarker as exc:
         raise ProjectUpdateError(f"invalid source marker {marker!r}") from exc
-    if _NON_LINUX_MARKER in normalized.replace('"', "'"):
-        return marker
-    return f"({marker}) and {_NON_LINUX_MARKER}"
+    if any(
+        conjunct.replace('"', "'").strip(" ()") == _NON_LINUX_MARKER
+        for conjunct in _top_level_conjuncts(normalized)
+    ):
+        return normalized
+    return str(Marker(f"({marker}) and {_NON_LINUX_MARKER}"))
+
+
+def _top_level_conjuncts(marker: str) -> tuple[str, ...]:
+    values: list[str] = []
+    start = 0
+    depth = 0
+    quote = ""
+    position = 0
+    while position < len(marker):
+        character = marker[position]
+        if quote:
+            if character == quote:
+                quote = ""
+            position += 1
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            position += 1
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        elif depth == 0 and marker[position : position + 5] == " and ":
+            values.append(marker[start:position])
+            start = position + 5
+            position += 5
+            continue
+        position += 1
+    values.append(marker[start:])
+    return tuple(values)
 
 
 def _ensure_verified_index(indexes: AoT, backend: BackendCandidate) -> None:

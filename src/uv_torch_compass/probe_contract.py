@@ -17,10 +17,8 @@ from uv_torch_compass.domain import (
 class ProbeContract:
     """Describe packages selected for execution and result validation.
 
-    The two package sets remain separate while the legacy behavior is being
-    characterized: installed packages control executed checks, while direct
-    packages control the expected result. A later behavioral change can replace
-    that policy without changing the subprocess boundary.
+    Installed packages control both executed checks and expected results so
+    direct and transitive companion dependencies share one contract.
     """
 
     installed_pytorch: frozenset[str]
@@ -30,6 +28,15 @@ class ProbeContract:
     def validates(self, package: str) -> bool:
         """Return whether the runtime process must validate an installed package."""
         return package in self.installed_pytorch
+
+    @classmethod
+    def for_installed_packages(
+        cls,
+        packages: frozenset[str],
+        profile: ProbeProfile,
+    ) -> ProbeContract:
+        """Build one consistent execution and validation contract."""
+        return cls(packages, packages, profile)
 
 
 @dataclass(frozen=True, slots=True)

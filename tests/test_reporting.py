@@ -23,6 +23,7 @@ from uv_torch_compass.domain import (
     RuntimeReport,
 )
 from uv_torch_compass.errors import ProjectUpdateError, ReportError
+from uv_torch_compass.report_destination import preflight_report_destination
 from uv_torch_compass.reporting import CommandReporter, redact
 from uv_torch_compass.workspace import WorkspaceContext
 
@@ -212,21 +213,22 @@ def test_reporter_requires_context_and_wraps_atomic_write_failure(
         )
 
 
-def test_report_file_currently_may_replace_the_target_pyproject(
+def test_report_destination_rejects_the_target_pyproject(
     tmp_path: Path,
 ) -> None:
     options = _text_options(tmp_path)
-    reporter = CommandReporter(
-        replace(options, report_file=options.pyproject),
-        "0.1.0",
+    options = replace(options, report_file=options.pyproject)
+    workspace = WorkspaceContext(
+        tmp_path,
+        tmp_path,
+        None,
+        tmp_path / "uv.lock",
+        False,
     )
 
-    with reporter:
-        reporter.emit_final(
-            CommandOutcome("planned", False, None),
-            None,
-            exit_code=0,
+    with pytest.raises(ReportError, match="protected"):
+        preflight_report_destination(
+            options,
+            workspace,
+            log_path=tmp_path / "logs/run.log",
         )
-
-    document = json.loads(options.pyproject.read_text(encoding="utf-8"))
-    assert document["status"] == "planned"
