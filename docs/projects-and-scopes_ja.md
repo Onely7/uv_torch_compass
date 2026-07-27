@@ -46,11 +46,11 @@ PEP 508 marker が、解決済み Linux Python の version と implementation �
 
 ## 別の package から導入される PyTorch
 
-候補環境では、直接の PyTorch 宣言だけでなく、選択した依存範囲の依存ルートをすべて解決します。たとえば、対象 release が PyTorch への依存を宣言していれば、`dependencies = ["vllm==0.19.1"]` だけで検証できます。
+候補環境では、直接の PyTorch 宣言だけでなく、選択した依存範囲の依存ルートをすべて解決します。たとえば、対象 release が PyTorch への依存を宣言していれば、`dependencies = ["vllm==0.19.1"]` だけで検証できます。一時 project の `requires-python` は選択した minor version に絞り、Linux、interpreter implementation、現在の CPU architecture を uv の environment marker に設定します。これにより、無関係な platform 向け分岐が利用不能な wheel を強制することを防ぎます。
 
-uv が推移依存を明示的な index へ振り分けるには、`[tool.uv.sources]` のキーに対応する直接依存が必要です。そのため検証後に、必要な `torch`、`torchvision`、`torchaudio` を、それを導入した選択済み scope へ version なしの source anchor として補います。複数 scope から同じ package へ到達する場合は base を優先し、それ以外では extra または依存グループに保持します。version は元の framework の制約と lock によって決まります。追加した anchor は package と scope の組として `[tool.uv-torch-compass.state]` に記録し、ツールが所有する宣言だけを後から削除できるようにします。
+uv が推移依存を明示的な index へ振り分けるには、`[tool.uv.sources]` のキーに対応する直接依存が必要です。候補の lock では `torch`、`torchvision`、`torchaudio` を見つけ、足りない version なしの anchor を各 package につき一度だけ追加して再度 lock します。同じ公式 index に収束しない場合は推測せず失敗させます。検証後は、それを導入した選択済み scope へ同じ anchor を提案します。複数 scope から同じ package へ到達する場合は base を優先し、それ以外では extra または依存グループに保持します。version は元の framework の制約と lock によって決まります。追加した anchor は package と scope の組として `[tool.uv-torch-compass.state]` に記録し、ツールが所有する宣言だけを後から削除できるようにします。
 
-候補解決には破棄可能な uv project を使います。対象の constraint、override、index、関連 source を引き継ぎ、相対 path と workspace source は一時 project から参照できる絶対 path に変換します。Git と URL source の意味は維持し、公式候補 index へ切り替えるのは PyTorch だけです。
+候補解決には破棄可能な uv project を使います。対象の constraint、override、index、関連 source を引き継ぎ、相対 path と workspace source は一時 project から参照できる絶対 path に変換します。Git と URL source の意味は維持し、公式候補 index へ切り替えるのは PyTorch だけです。最初に `uv lock` を行い、lock の PyTorch source を検証してから `uv sync --locked` でインストールします。
 
 選択していない extra と group の宣言は書き換えません。ただし uv が lockfile 全体を解決するときには影響するため、project 内の別の非互換性で `uv lock` が失敗し、rollback する場合があります。
 

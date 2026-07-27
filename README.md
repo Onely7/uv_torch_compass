@@ -26,11 +26,11 @@ For a framework that depends on PyTorch, keep its real dependency in the project
 dependencies = ["vllm==0.19.1"]
 ```
 
-The candidate environment resolves the complete selected dependency graph. If `vllm` requires a particular `torch`, `torchvision`, or `torchaudio` version, that constraint participates in backend selection. The applied configuration adds only the direct source anchors needed for uv's explicit PyTorch index, records those anchors as tool-managed state, and preserves the framework requirement.
+The candidate environment first locks the complete selected dependency graph for the chosen Python minor version, Linux, and CPU architecture. If `vllm` requires particular `torch`, `torchvision`, or `torchaudio` versions, those constraints participate in backend selection. The tool redirects those transitive PyTorch packages to the same official index, relocks until the sources are consistent, and preserves the framework requirement.
 
 Candidate resolution also preserves relevant uv constraints, overrides, private indexes, and selected path, Git, URL, or workspace sources. Only PyTorch packages are redirected to the official candidate index.
 
-If no allowed CUDA index contains the required PyTorch build, the command fails before changing the project. The summary identifies the package and requirement, the package that introduced it, the attempted index, and practical next steps; complete redacted uv output remains in the private log.
+If locking succeeds but a later package cannot be installed, the result keeps the resolved PyTorch versions and reports the actual blocker instead of claiming that the backend is unavailable. For example, it can distinguish “`torch==2.10.0+cu126` resolved” from “the `xgrammar` wheel required by `vllm` is unavailable for Linux x86_64.” Complete redacted uv output remains in the private log.
 
 From the target project, run a version published on PyPI to verify a candidate and preview the change:
 
@@ -80,12 +80,13 @@ uv-torch-compass plan --framework-probe vllm
 
 `stable` is the default channel. `nightly` is used only when explicitly selected. CUDA minor-version compatibility is also opt-in with `--cuda-compatibility minor`; it can use a newer CUDA runtime within the same major family, but a successful result is reported with a warning. See [backend and runtime selection](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works.md) for the exact order and checks.
 
-`--framework-probe vllm` is also opt-in. It checks vLLM metadata, importability, its native extension, and the selected execution platform without downloading a model or starting workers.
+When the resolved graph contains `vllm`, the same bounded vLLM check runs automatically. `--framework-probe vllm` remains available when you want to request it explicitly. The check covers metadata, importability, the native extension, and the selected execution platform without downloading a model or starting workers.
 
 ## Safety at a glance
 
 - `plan` installs and tests candidates in temporary environments but does not change the target `pyproject.toml`, `uv.lock`, or project environment.
 - `apply` creates timestamped backups and treats a workspace member's `pyproject.toml` and the shared root `uv.lock` as one transaction.
+- Candidate verification separates locking, locked installation, runtime checks, and framework checks. It limits the temporary lock to the selected Python minor version, Linux, and CPU architecture, allowing uv to backtrack to a version with a usable wheel when one exists.
 - Before changing the project environment, `apply` locks the complete graph and performs a locked sync dry run. It also records the current Linux architecture as a required uv environment, so unavailable wheels fail before installation starts.
 - Writes use same-directory temporary files and atomic replacement. A workspace lock prevents two `apply` processes from updating together.
 - Lock, sync, final validation, timeout, SIGINT, and SIGTERM failures trigger file rollback and an environment recovery attempt.

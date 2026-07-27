@@ -76,9 +76,11 @@ log には phase、マスク済み subprocess 出力、package version、ロー�
 | CUDA runtime component が backend と一致しない | lockfile から同期環境を作り直し、index 設定を確認する。インストール済み CUDA major・minor は `cuNNN` と一致する必要がある |
 | minor で native architecture がない | 選択 GPU 用の native machine code が wheel にない。別 backend を選ぶか、driver 更新後に strict へ戻す |
 | compile probe の失敗 | `--probe-profile standard` で再実行し、通常の CUDA 動作と任意の Inductor／Triton 経路を切り分ける |
-| vLLM framework probe の失敗 | install 済み `vllm` の metadata、native extension、報告された platform を確認する。この probe は model の読込みや worker の起動を行わない |
+| vLLM framework probe の失敗 | install 済み `vllm` の metadata、native extension、報告された platform を確認する。vLLM 解決時は自動実行され、model の読込みや worker の起動は行わない |
 | 候補の source 方針を準備できない | 対象 project が使う path、Git、URL、workspace、constraint、override、index source を確認する。候補検証では関連 source を PyPI に暗黙置換せず保持する |
-| `uv lock` の失敗 | 選択していない scope や別 workspace member を含む uv の resolver 説明を読む |
+| 候補の `lock` 失敗 | 候補の failure と private log で package、requirement、index、platform を確認する。有効な lock を解析できるまでは PyTorch の解決成功として表示しない |
+| PyTorch 解決後の候補 `install` 失敗 | 最初に `Resolved PyTorch` を確認し、次に原因 package と依存経路を調べる。すべての候補で wheel がない package は CUDA backend を変えても解決しない |
+| project の `uv lock` 失敗 | 選択していない scope や別 workspace member を含む uv の resolver 説明を読む |
 | 利用可能な backend がない | 候補ごとのpackage、requirement、依存経路、indexと対応案を確認する。failure kindが`unknown`の場合はprivate logを確認する |
 | `uv sync preflight failed` と利用可能な wheel がない旨の表示 | uv が示す package と platform を確認する。現在の Linux architecture は `tool.uv.required-environments` に記録されるため、互換 version があれば uv が lock 時に選択できる |
 | 環境が同期されていない | 意図した `apply` を実行するか、`uv sync --locked --check` の出力を調べる |

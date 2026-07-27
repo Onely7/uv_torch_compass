@@ -76,10 +76,12 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | CUDA runtime component does not match the backend | Recreate the synchronized environment from the lockfile and inspect index configuration; the installed CUDA major/minor must match `cuNNN`. |
 | native architecture is missing in minor mode | The wheel lacks native machine code for the selected GPU. Choose another backend or update the driver and return to strict mode. |
 | compile probe failed | Re-run with `--probe-profile standard` to separate normal CUDA operation from the optional Inductor/Triton path. |
-| vLLM framework probe failed | Check the installed `vllm` metadata, native extension, and reported platform. The probe does not load a model or start workers. |
+| vLLM framework probe failed | Check the installed `vllm` metadata, native extension, and reported platform. The probe runs automatically when vLLM is resolved and does not load a model or start workers. |
 | candidate source policy could not be prepared | Inspect path, Git, URL, workspace, constraint, override, and index sources used by the target project. Candidate verification preserves relevant sources instead of silently replacing them with PyPI. |
 | no usable backend | Read each failed candidate's package, requirement, dependency path, and index. Use its suggestions; inspect the private log when the failure kind is `unknown`. |
-| `uv lock` failure | Read uv's resolver explanation, including unselected scopes and other workspace members. |
+| candidate `lock` failure | Read the candidate failure and private log for the package, requirement, index, and platform. No PyTorch resolution is claimed unless a valid lock was parsed. |
+| candidate `install` failure after PyTorch resolved | Read `Resolved PyTorch` first, then inspect the reported blocking package and dependency path. Changing the CUDA backend will not fix a wheel that is unavailable for every candidate. |
+| project `uv lock` failure | Read uv's resolver explanation, including unselected scopes and other workspace members. |
 | `uv sync preflight failed` and a package has no wheel | Inspect the package and platform in uv's message. The tool records the current Linux architecture in `tool.uv.required-environments`, allowing uv to choose a compatible version when one exists. |
 | environment is not synchronized | Run the intended `apply`, or inspect `uv sync --locked --check` output. |
 | final runtime validation failure | The synchronized project did not reproduce the temporary candidate result; rollback should have started. |

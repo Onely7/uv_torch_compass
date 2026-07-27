@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `5` and includes these top-level fields:
+The schema version is `6`. Candidate resolution and later failures are represented separately:
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "operation": "plan",
   "status": "failed",
   "exit_code": 1,
@@ -40,31 +40,66 @@ The schema version is `5` and includes these top-level fields:
   "python": {},
   "candidate_attempts": [
     {
-      "backend": "cu121",
+      "backend": "cu126",
       "stage": "install",
       "status": "failed",
-      "reason": "The required package build is unavailable from this index.",
+      "reason": "A required wheel is unavailable for the selected platform.",
       "compatibility": "strict",
+      "resolution": {
+        "status": "resolved",
+        "environment": {
+          "implementation": "cpython",
+          "python_version": "3.12.12",
+          "python_minor": "3.12",
+          "sys_platform": "linux",
+          "platform_machine": "x86_64",
+          "required_marker": "sys_platform == 'linux' and platform_machine == 'x86_64'"
+        },
+        "pytorch": {
+          "torch": {
+            "version": "2.10.0+cu126",
+            "index": "https://download.pytorch.org/whl/cu126"
+          }
+        },
+        "package_count": 182
+      },
+      "phases": {
+        "lock": "passed",
+        "install": "failed",
+        "runtime": "not-run",
+        "framework": "not-run"
+      },
       "failure": {
-        "kind": "no-compatible-distribution",
-        "summary": "The required package build is unavailable from this index.",
+        "kind": "wheel-unavailable",
+        "summary": "xgrammar has no wheel for the selected platform.",
         "package": {
-          "name": "torch",
-          "version": "2.10.0",
-          "requirement": "torch==2.10.0"
+          "name": "xgrammar",
+          "version": "0.2.4",
+          "requirement": "xgrammar==0.2.4"
         },
-        "required_by": ["vllm>=0.25.0", "torch==2.10.0"],
-        "index": {
-          "name": "pytorch-cu121",
-          "url": "https://download.pytorch.org/whl/cu121"
-        },
-        "platform": null,
-        "suggestions": ["Select a dependency version compatible with a published PyTorch build."]
+        "required_by": ["vllm==0.19.1", "xgrammar==0.2.4"],
+        "index": null,
+        "platform": "linux-x86_64",
+        "dependency_paths": [
+          ["uv-torch-compass-candidate==0", "vllm==0.19.1", "xgrammar==0.2.4"]
+        ],
+        "available_wheel_platforms": ["linux-aarch64", "macos-x86_64"],
+        "suggestions": ["Select a dependency version with a wheel for linux-x86_64."]
       }
     }
   ],
-  "resolution_failure": {},
-  "candidate_failure_summary": {},
+  "blocking_summary": {
+    "summary": "Compatible PyTorch builds were resolved, but a later candidate phase failed.",
+    "pytorch_builds_found": [
+      {
+        "backend": "cu126",
+        "index": "https://download.pytorch.org/whl/cu126",
+        "packages": {"torch": "2.10.0+cu126"}
+      }
+    ],
+    "common_blockers": [],
+    "suggestions": []
+  },
   "selected_backend": "",
   "selected_index": "",
   "selected_gpu": {},
@@ -92,9 +127,11 @@ The schema version is `5` and includes these top-level fields:
 
 The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. GPU metadata contains the selected device, NVIDIA driver version, and the CUDA maximum printed by `nvidia-smi`.
 
-Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, and an optional `failure`. Policy-rejected candidates are recorded as `skipped` before installation. `candidate_failure_summary` aggregates failed packages, indexes, and de-duplicated suggestions across all candidates. `resolution_failure` contains that terminal aggregate only when the command itself fails; an earlier rejected candidate does not make a successful result look failed. Missing facts are JSON `null`; they are never guessed.
+Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, `phases`, and optional `resolution` and `failure` objects. The four phases are `lock`, `install`, `runtime`, and `framework`. Once locking succeeds, `resolution` retains the exact execution environment and resolved PyTorch packages even if a later phase fails.
 
-Schema 5 also records the executed `probe_contract`, opt-in `framework_validation`, filtered child-environment policy, scoped source anchors, and final operation state. A successful CUDA `validation` includes:
+`blocking_summary` groups the same blocking package across candidates while preserving every attempt. It distinguishes “no candidate resolved” from “PyTorch resolved but a later package or validation failed.” Missing facts are JSON `null`; they are never guessed. Schema 6 removes the schema 5 `resolution_failure` and `candidate_failure_summary` fields.
+
+Schema 6 also records the executed `probe_contract`, automatic or explicit `framework_validation` trigger, filtered child-environment policy, scoped source anchors, and final operation state. A successful CUDA `validation` includes:
 
 - resolved PyTorch CUDA runtime and runtime-component version;
 - required minimum driver and `strict`, `minor`, or `unsupported` classification;

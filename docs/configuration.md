@@ -44,7 +44,7 @@ All keys are optional. Unknown keys, wrong value types, explicit empty strings, 
 | `UV_TORCH_COMPASS_CHANNEL` | `stable` or `nightly`. |
 | `UV_TORCH_COMPASS_CUDA_COMPATIBILITY` | `strict` or explicitly permitted `minor`. |
 | `UV_TORCH_COMPASS_PROBE_PROFILE` | `standard` or `compile`. |
-| `UV_TORCH_COMPASS_FRAMEWORK_PROBES` | Comma-separated opt-in framework checks; currently `vllm`. |
+| `UV_TORCH_COMPASS_FRAMEWORK_PROBES` | Comma-separated explicitly requested framework checks; currently `vllm`. Installed vLLM is checked automatically. |
 | `UV_TORCH_COMPASS_EXTRAS` | Comma-separated extras. |
 | `UV_TORCH_COMPASS_GROUPS` | Comma-separated dependency groups. |
 | `UV_TORCH_COMPASS_CUDA_DEVICE` | NVIDIA index or UUID. |
@@ -72,7 +72,7 @@ This resolves to `vision` followed by `audio`.
 | Channel | `stable` |
 | CUDA compatibility | `strict` |
 | Probe profile | `standard` |
-| Framework probes | none |
+| Explicit framework probes | none; installed vLLM is detected automatically |
 | Extras and groups | none |
 | CUDA device | visible device with the most free memory, unless the current CUDA selection or `--cuda-device` chooses one |
 | Link mode | `copy` |
