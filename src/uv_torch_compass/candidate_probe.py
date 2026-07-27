@@ -46,7 +46,10 @@ from uv_torch_compass.framework_validation import (
     parse_framework_probe,
 )
 from uv_torch_compass.index_url import canonical_official_pytorch_url
-from uv_torch_compass.installed_metadata import read_installed_distributions
+from uv_torch_compass.installed_metadata import (
+    InstalledDistribution,
+    read_installed_distributions,
+)
 from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.probe_contract import (
     CandidateProbeResult,
@@ -225,7 +228,13 @@ class CandidateProbeService:
                 contract,
                 resolution,
             )
-            return self._finalize_candidate(venv, candidate, outcome, resolution)
+            return self._finalize_candidate(
+                venv,
+                candidate,
+                outcome,
+                resolution,
+                installed_distributions,
+            )
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
             self.reporter.warn(
@@ -267,7 +276,13 @@ class CandidateProbeService:
             contract,
             resolution,
         )
-        return self._finalize_candidate(venv, candidate, outcome, resolution)
+        return self._finalize_candidate(
+            venv,
+            candidate,
+            outcome,
+            resolution,
+            installed_distributions,
+        )
 
     def _resolve_candidate(
         self,
@@ -390,6 +405,7 @@ class CandidateProbeService:
         candidate: BackendCandidate,
         outcome: ProbeOutcome | None,
         resolution: CandidateResolution,
+        installed_distributions: tuple[InstalledDistribution, ...],
     ) -> CandidateProbeResult:
         if outcome is None:
             return CandidateProbeResult.failed(
@@ -397,7 +413,12 @@ class CandidateProbeService:
                 resolution,
                 stage="runtime",
             )
-        framework_probes = self._framework_probes(venv, candidate, resolution)
+        framework_probes = self._framework_probes(
+            venv,
+            candidate,
+            resolution,
+            installed_distributions,
+        )
         if isinstance(framework_probes, CandidateProbeResult):
             return framework_probes
         return CandidateProbeResult.passed(
@@ -418,8 +439,15 @@ class CandidateProbeService:
         venv: Path,
         candidate: BackendCandidate,
         resolution: CandidateResolution,
+        installed_distributions: tuple[InstalledDistribution, ...],
     ) -> tuple[FrameworkValidation, ...] | CandidateProbeResult:
-        requested = self.framework_probes
+        installed = {distribution.name for distribution in installed_distributions}
+        automatic = (
+            frozenset({FrameworkProbe.VLLM})
+            if "vllm" in installed and FrameworkProbe.VLLM not in self.framework_probes
+            else frozenset()
+        )
+        requested = tuple(dict.fromkeys((*self.framework_probes, *automatic)))
         if not requested:
             return ()
         arguments: list[str | Path] = [
@@ -445,7 +473,11 @@ class CandidateProbeService:
             )
         self.reporter.detail(result.stdout + result.stderr)
         try:
-            validations = parse_framework_probe(result.stdout, requested)
+            validations = parse_framework_probe(
+                result.stdout,
+                requested,
+                allow_automatic=True,
+            )
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return CandidateProbeResult.failed(

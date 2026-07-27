@@ -35,6 +35,7 @@ def test_vllm_probe_validates_import_native_extension_and_platform(
     assert result["status"] == "PASS"
     assert result["version"] == "0.19.1"
     assert result["platform"] == "CudaPlatform"
+    assert result["trigger"] == "explicit"
 
 
 def test_vllm_probe_reports_bounded_failure(monkeypatch) -> None:
@@ -74,6 +75,32 @@ def test_main_emits_one_json_document(monkeypatch, capsys) -> None:
     assert status == 0
     assert document["schema_version"] == 1
     assert document["results"][0]["framework"] == "vllm"
+    assert document["results"][0]["trigger"] == "explicit"
+
+
+def test_main_auto_detects_installed_vllm(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(framework_probe, "_distribution_installed", lambda _: True)
+    monkeypatch.setattr(
+        framework_probe,
+        "_probe_vllm",
+        lambda _: {
+            "framework": "vllm",
+            "status": "PASS",
+            "version": "1",
+            "import_test": "PASS",
+            "native_extension_test": "PASS",
+            "platform_test": "PASS",
+            "platform": "CudaPlatform",
+            "error": "",
+            "trigger": "explicit",
+        },
+    )
+
+    status = framework_probe.main(["--auto-detect", "--expected-backend", "cu128"])
+
+    document = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert document["results"][0]["trigger"] == "automatic"
 
 
 def test_main_fails_when_framework_check_fails(monkeypatch, capsys) -> None:

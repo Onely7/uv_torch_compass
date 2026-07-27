@@ -207,6 +207,15 @@ source = { registry = "https://download.pytorch.org/whl/cpu" }
         groups,
         cuda_device,
     ) -> CommandResult:
+        if any(
+            str(argument).endswith("framework_probe.py")
+            for argument in script_arguments
+        ):
+            return CommandResult(
+                0,
+                '{"schema_version": 1, "results": []}\n',
+                "",
+            )
         del (
             project_dir,
             python,

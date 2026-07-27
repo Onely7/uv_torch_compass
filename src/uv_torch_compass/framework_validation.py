@@ -1,4 +1,4 @@
-"""Define and validate opt-in framework probe results."""
+"""Define and validate explicit or automatically detected framework results."""
 
 from __future__ import annotations
 
@@ -21,11 +21,14 @@ class FrameworkValidation:
     platform_test: str
     platform: str
     error: str = ""
+    trigger: str = "explicit"
 
 
 def parse_framework_probe(
     output: str,
     expected: tuple[FrameworkProbe, ...],
+    *,
+    allow_automatic: bool = False,
 ) -> tuple[FrameworkValidation, ...]:
     """Parse a framework probe and enforce the requested validation contract.
 
@@ -60,6 +63,7 @@ def parse_framework_probe(
                 "platform_test",
                 "platform",
                 "error",
+                "trigger",
             )
         }
         if not all(isinstance(value, str) for value in values.values()):
@@ -68,6 +72,8 @@ def parse_framework_probe(
             framework = FrameworkProbe(values["framework"])
         except ValueError as exc:
             raise ProbeError("framework probe returned an unknown framework") from exc
+        if values["trigger"] not in {"explicit", "automatic"}:
+            raise ProbeError("framework probe returned an invalid trigger")
         results.append(
             FrameworkValidation(
                 framework,
@@ -78,11 +84,14 @@ def parse_framework_probe(
                 values["platform_test"],
                 values["platform"],
                 values["error"],
+                values["trigger"],
             )
         )
 
     by_framework = {result.framework: result for result in results}
-    if set(by_framework) != set(expected):
+    if not set(expected).issubset(by_framework) or (
+        not allow_automatic and set(by_framework) != set(expected)
+    ):
         raise ProbeError("framework probe did not return exactly the requested results")
     failed = [result for result in results if result.status != "PASS"]
     if failed:
@@ -91,7 +100,8 @@ def parse_framework_probe(
             for result in failed
         )
         raise ProbeError(f"framework validation failed: {details}")
-    return tuple(by_framework[item] for item in expected)
+    order = tuple(dict.fromkeys((*expected, *by_framework)))
+    return tuple(by_framework[item] for item in order)
 
 
 def framework_validation_document(
@@ -108,6 +118,7 @@ def framework_validation_document(
             "platform_test": result.platform_test,
             "platform": result.platform,
             "error": result.error,
+            "trigger": result.trigger,
         }
         for result in results
     ]

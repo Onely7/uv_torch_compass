@@ -390,6 +390,7 @@ def test_probe_runs_requested_framework_contract(tmp_path: Path) -> None:
                     "platform_test": "PASS",
                     "platform": "CudaPlatform",
                     "error": "",
+                    "trigger": "explicit",
                 }
             ],
         }
@@ -412,8 +413,7 @@ def test_probe_runs_requested_framework_contract(tmp_path: Path) -> None:
     assert outcome.framework_validation[0].framework is FrameworkProbe.VLLM
 
 
-def test_probe_currently_does_not_auto_validate_installed_vllm(tmp_path: Path) -> None:
-    """Characterize the explicit-only framework probe contract."""
+def test_probe_auto_validates_installed_vllm(tmp_path: Path) -> None:
 
     class VllmUv(ProbeUv):
         def sync_locked_candidate(
@@ -431,13 +431,40 @@ def test_probe_currently_does_not_auto_validate_installed_vllm(tmp_path: Path) -
     service = _service(
         tmp_path,
         VllmUv(),
-        ProbeRunner([CommandResult(0, _report("cpu"), "")]),
+        ProbeRunner(
+            [
+                CommandResult(0, _report("cpu"), ""),
+                CommandResult(
+                    0,
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "results": [
+                                {
+                                    "framework": "vllm",
+                                    "status": "PASS",
+                                    "version": "0.19.1",
+                                    "import_test": "PASS",
+                                    "native_extension_test": "PASS",
+                                    "platform_test": "PASS",
+                                    "platform": "CpuPlatform",
+                                    "error": "",
+                                    "trigger": "automatic",
+                                }
+                            ],
+                        }
+                    ),
+                    "",
+                ),
+            ]
+        ),
         ProbeReporter(),
     )
 
     outcome = service.find_working_candidate((BackendCandidate("cpu"),))
 
-    assert outcome.framework_validation == ()
+    assert outcome.framework_validation[0].framework is FrameworkProbe.VLLM
+    assert outcome.framework_validation[0].trigger == "automatic"
 
 
 def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:

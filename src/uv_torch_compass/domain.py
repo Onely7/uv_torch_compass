@@ -59,7 +59,7 @@ class ProbeProfile(str, Enum):
 
 
 class FrameworkProbe(str, Enum):
-    """Identify an opt-in framework integration check."""
+    """Identify a supported framework integration check."""
 
     VLLM = "vllm"
 

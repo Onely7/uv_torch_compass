@@ -219,7 +219,11 @@ class CompassApplication:
         metadata["probe_contract"] = {
             "profile": self.options.probe_profile.value,
             "frameworks": [
-                framework.value for framework in self.options.framework_probes
+                {
+                    "name": validation.framework.value,
+                    "trigger": validation.trigger,
+                }
+                for validation in verified.framework_validation
             ],
             "installed_pytorch": sorted(verified.installed_pytorch),
         }
@@ -426,7 +430,11 @@ class CompassApplication:
         metadata["probe_contract"] = {
             "profile": self.options.probe_profile.value,
             "frameworks": [
-                framework.value for framework in self.options.framework_probes
+                {
+                    "name": validation.framework.value,
+                    "trigger": validation.trigger,
+                }
+                for validation in framework_validations
             ],
         }
         metadata["environment_policy"] = {
@@ -549,12 +557,11 @@ class CompassApplication:
         backend,
         gpu_selector: str | None,
     ) -> tuple[FrameworkValidation, ...]:
-        if not self.options.framework_probes:
-            return ()
         arguments: list[str | Path] = [
             Path(__file__).with_name("framework_probe.py").resolve(),
             "--expected-backend",
             backend.value,
+            "--auto-detect",
         ]
         for framework in self.options.framework_probes:
             arguments.extend(["--framework", framework.value])
@@ -572,6 +579,7 @@ class CompassApplication:
             validations = parse_framework_probe(
                 result.stdout,
                 self.options.framework_probes,
+                allow_automatic=True,
             )
         except ProbeError as exc:
             raise CommandError(str(exc)) from exc
