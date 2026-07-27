@@ -132,7 +132,10 @@ class FakeUv:
     def install_candidate(
         self, venv: Path, requirements, candidate, *, dry_run: bool = False
     ) -> CommandResult:
-        del venv, requirements, candidate, dry_run
+        del requirements, candidate, dry_run
+        metadata = venv / "lib/python/site-packages/torch-2.7.0.dist-info/METADATA"
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        metadata.write_text("Name: torch\nVersion: 2.7.0\n", encoding="utf-8")
         return CommandResult(0, "installed", "")
 
     def install_numpy_lt2(self, venv: Path) -> CommandResult:
@@ -159,9 +162,14 @@ class FakeUv:
         extras,
         groups,
         check: bool = False,
+        dry_run: bool = False,
     ) -> CommandResult:
         del project_dir, python, package, extras, groups, check
         self.sync_calls += 1
+        if dry_run:
+            if self.fail_sync_once and self.sync_calls == 1:
+                return CommandResult(1, "", "sync failed")
+            return CommandResult(0, "would sync", "")
         if self.fail_sync_once and self.sync_calls == 1:
             return CommandResult(1, "", "sync failed")
         return CommandResult(0, "synced", "")
@@ -283,7 +291,7 @@ def test_apply_updates_locks_syncs_and_validates(tmp_path: Path, monkeypatch) ->
     assert all(path.is_file() for path in result.outcome.backups)
 
 
-def test_sync_failure_restores_project_and_existing_lock(
+def test_sync_preflight_failure_restores_project_and_existing_lock(
     tmp_path: Path, monkeypatch
 ) -> None:
     pyproject = _project(tmp_path)
@@ -298,7 +306,7 @@ def test_sync_failure_restores_project_and_existing_lock(
     )
     reporter = CommandReporter(options, "0.1.0")
 
-    with reporter, pytest.raises(CommandError, match="uv sync failed"):
+    with reporter, pytest.raises(CommandError, match="uv sync preflight failed"):
         CompassApplication(
             options,
             cast(ProcessRunner, FakeRunner()),
@@ -308,10 +316,10 @@ def test_sync_failure_restores_project_and_existing_lock(
 
     assert pyproject.read_text(encoding="utf-8") == original
     assert lockfile.read_text(encoding="utf-8") == "original lock"
-    assert uv.sync_calls == 2
+    assert uv.sync_calls == 1
 
 
-def test_sync_failure_restores_original_absence_of_lockfile(
+def test_sync_preflight_failure_restores_original_absence_of_lockfile(
     tmp_path: Path, monkeypatch
 ) -> None:
     pyproject = _project(tmp_path)
@@ -324,7 +332,7 @@ def test_sync_failure_restores_original_absence_of_lockfile(
     )
     reporter = CommandReporter(options, "0.1.0")
 
-    with reporter, pytest.raises(CommandError, match="uv sync failed"):
+    with reporter, pytest.raises(CommandError, match="uv sync preflight failed"):
         CompassApplication(
             options,
             cast(ProcessRunner, FakeRunner()),
@@ -334,7 +342,7 @@ def test_sync_failure_restores_original_absence_of_lockfile(
 
     assert pyproject.read_text(encoding="utf-8") == original
     assert not (pyproject.parent / "uv.lock").exists()
-    assert uv.sync_calls == 2
+    assert uv.sync_calls == 1
 
 
 def test_check_validates_applied_state_without_changes(

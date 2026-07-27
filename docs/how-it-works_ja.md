@@ -26,9 +26,12 @@ flowchart TD
     Policy[具体的な CUDA build ごとに<br/>driver、CUDA 上限、組み込み表を照合する]
     Candidates[許可した候補を新しい順に並べる<br/>除外した理由も記録する]
     CPU[公式 CPU 候補を使う]
-    Temporary[一時環境へ候補を一つ install する]
+    Roots[vllm なども含む<br/>選択済みの依存ルート全体を解決する]
+    Temporary[依存グラフ全体を<br/>一時環境へ install する]
+    Metadata[install 済み metadata を読み<br/>推移的な PyTorch package を見つける]
     Runtime[解決した CUDA component を確認し<br/>tensor と library の検証を行う]
     CandidateResult{候補は検証を通過したか}
+    Diagnose[認証情報を除いた uv の失敗を分類し<br/>package、requirement、index を記録する]
     More{次の候補があるか}
     Selected[最初に通過した候補を選ぶ]
     Action{plan か apply か}
@@ -36,7 +39,9 @@ flowchart TD
     Planned([planned<br/>project は変更しない])
 
     Backup[pyproject.toml と uv.lock を backup する]
-    Update[pyproject.toml を更新する<br/>uv で lock と同期を行う]
+    Update[管理対象の source anchor を追加し<br/>依存グラフ全体を lock する]
+    Preflight{locked sync の dry run に成功したか}
+    Sync[project 環境を同期する]
     FinalCheck{更新後の実行検証に成功したか}
     Success([success または success_with_warnings<br/>backup は残す])
     Restore[元のファイルへ戻す<br/>project 環境の復旧も試す]
@@ -50,21 +55,25 @@ flowchart TD
     CheckResult -- いいえ --> Failed
 
     Command -- plan または apply --> Driver
-    Driver -- はい --> Policy --> Candidates --> Temporary
-    Driver -- いいえ --> CPU --> Temporary
-    Temporary --> Runtime --> CandidateResult
+    Driver -- はい --> Policy --> Candidates --> Roots
+    Driver -- いいえ --> CPU --> Roots
+    Roots --> Temporary --> Metadata --> Runtime --> CandidateResult
     CandidateResult -- はい --> Selected --> Action
-    CandidateResult -- いいえ --> More
-    More -- はい --> Temporary
+    CandidateResult -- いいえ --> Diagnose --> More
+    More -- はい --> Roots
     More -- いいえ --> Failed
 
     Action -- plan --> Plan --> Planned
-    Action -- apply --> Backup --> Update --> FinalCheck
+    Action -- apply --> Backup --> Update --> Preflight
+    Preflight -- いいえ --> Restore
+    Preflight -- はい --> Sync --> FinalCheck
     FinalCheck -- はい --> Success
     FinalCheck -- いいえ --> Restore --> Failed
 ```
 
 候補の検証には一時的な virtual environment を使うため、候補が失敗しても対象 project は変更されません。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。
+
+install が失敗した場合は、認証情報と制御文字を除去してから、既知の uv resolver形式を解析します。原因の package、version requirement、依存経路、index、platformは、uv出力または候補方針から確定できる場合だけ記録します。未知の形式を推測で補わず、`unknown`として報告し、完全なredaction済み出力をprivate logへ残します。
 
 ## Python の選択
 
@@ -129,7 +138,7 @@ CUDA を必須にした場合、NVIDIA 情報の欠落はエラーです。`auto
 
 ## runtime probe
 
-候補ごとに新しい一時 virtual environment を作り、選択した PyTorch 依存条件と、必要になった NumPy 制約だけをインストールします。probe は JSON を返し、親 process が内容をもう一度検証します。
+候補ごとに新しい一時 virtual environment を作り、選択した基本依存、extra、group の依存ルートをすべてインストールします。これにより、`vllm` などが要求する version 制約も PyTorch の解決に反映されます。第三者 package を import せず、install 済みの `dist-info` metadata から PyTorch package を見つけて実行検証します。probe は JSON を返し、親 process が内容をもう一度検証します。
 
 | 確認 | 必要な動作 |
 | --- | --- |
@@ -165,7 +174,7 @@ NumPy bridge だけが失敗した場合は、`numpy<2` を使って一度だけ
 1. `inspect`: workspace、依存条件、Python、host 情報を解決する
 2. `resolve`: 再現可能な順序で候補を組み立てる
 3. `verify`: 一時環境へ候補を install して実行する
-4. `apply`: backup、編集、lock、sync、最終環境の検証を行う
+4. `apply`: backup、編集、lock、sync の dry run、同期、最終環境の検証を行う
 5. `restore`: 失敗後にファイルを戻し、環境の復旧を試す
 
 `plan` は検証済みの前後行なし diff を作って終了します。`check` は候補探索を省き、記録済みの状態を検証します。どちらも実行中に `pyproject.toml` または `uv.lock` が変わると結果を無効にします。

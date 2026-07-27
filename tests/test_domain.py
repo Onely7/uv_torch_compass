@@ -44,6 +44,27 @@ def test_nightly_candidate_uses_official_nightly_index() -> None:
     assert candidate.index_url == "https://download.pytorch.org/whl/nightly/cu128"
 
 
+def test_candidate_requirements_include_all_selected_roots() -> None:
+    scope = Scope("base")
+    requirements = ProjectRequirements(
+        ">=3.10",
+        "",
+        (
+            ScopedRequirement(scope, "vllm==0.19.1"),
+            ScopedRequirement(scope, "torch"),
+            ScopedRequirement(scope, "torchvision"),
+        ),
+        (),
+        (scope,),
+    )
+
+    assert requirements.probe_requirements == (
+        "vllm==0.19.1",
+        "torch",
+        "torchvision",
+    )
+
+
 def test_runtime_report_validates_schema_and_requirement_versions() -> None:
     output = json.dumps(
         {

@@ -122,11 +122,6 @@ def read_project_requirements(
             parsed.append(_scoped_requirement(scope, "torch"))
         selected.extend(parsed)
 
-    if not any(item.package in PYTORCH_PACKAGES for item in selected):
-        raise ConfigurationError(
-            "no torch, torchvision, or torchaudio requirement was selected"
-        )
-
     all_pytorch = _read_all_pytorch(project, optional, dependency_groups)
     _reject_conflicting_exact_versions((*selected, *all_pytorch))
     return ProjectRequirements(
@@ -145,6 +140,8 @@ def render_project_configuration(
     overrides: tuple[str, ...],
     backend: BackendCandidate,
     numpy_lt2_required: bool,
+    source_packages: frozenset[str] | None = None,
+    required_environment: str | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     """Render a comment-preserving project update without writing it.
 
@@ -186,18 +183,45 @@ def render_project_configuration(
                 _ensure_numpy_lt2(values, scope)
                 changes.append(f"added Linux NumPy constraint to {scope.label}")
 
-        packages = {
+        tool = _ensure_table(document, "tool")
+        compass = _ensure_table(tool, "uv-torch-compass")
+        state = _ensure_table(compass, "state")
+        previous_managed = _managed_source_anchors(state)
+        declared_packages = {
             item.package
             for item in requirements.selected
             if item.package in PYTORCH_PACKAGES
         }
-        tool = _ensure_table(document, "tool")
+        direct_packages = declared_packages.difference(previous_managed)
+        packages = direct_packages if source_packages is None else set(source_packages)
+        unknown_packages = packages.difference(PYTORCH_PACKAGES)
+        if unknown_packages:
+            raise ProjectUpdateError(
+                "unsupported PyTorch source packages: "
+                + ", ".join(sorted(unknown_packages))
+            )
+        managed_anchors = packages.difference(direct_packages)
+        stale_anchors = previous_managed.difference(managed_anchors)
+        for package in sorted(stale_anchors):
+            _remove_bare_requirement(base, package)
+        if managed_anchors:
+            for package in sorted(managed_anchors):
+                if package not in _dependency_names(base):
+                    base.append(package)
+            changes.append(
+                "added managed PyTorch source anchors: "
+                + ", ".join(sorted(managed_anchors))
+            )
         uv = _ensure_table(tool, "uv")
+        if required_environment is not None:
+            _ensure_required_environment(uv, required_environment)
+            changes.append("recorded the current Linux installation environment")
         sources = _ensure_table(uv, "sources")
         for package in sorted(packages):
             sources[package] = _linux_source_value(sources.get(package), backend)
         if packages:
             changes.append("configured the verified Linux PyTorch index")
+        state["managed-source-anchors"] = sorted(managed_anchors)
 
         indexes = uv.get("index")
         if indexes is None:
@@ -508,6 +532,48 @@ def _dependency_names(values: Iterable[object]) -> set[str]:
         except InvalidRequirement:
             continue
     return names
+
+
+def _ensure_required_environment(uv: Mapping[str, object], marker: str) -> None:
+    raw = uv.get("required-environments")
+    if raw is None:
+        values: list[str] = []
+    elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+        values = cast(list[str], list(raw))
+    else:
+        raise ProjectUpdateError("tool.uv.required-environments must be an array")
+    if marker not in values:
+        values.append(marker)
+    cast(Any, uv)["required-environments"] = values
+
+
+def _managed_source_anchors(state: Mapping[str, object]) -> set[str]:
+    raw = state.get("managed-source-anchors", [])
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ProjectUpdateError("managed-source-anchors must be an array of strings")
+    anchors = {str(canonicalize_name(item)) for item in cast(list[str], raw)}
+    if not anchors.issubset(PYTORCH_PACKAGES):
+        raise ProjectUpdateError("managed-source-anchors contains an unknown package")
+    return anchors
+
+
+def _remove_bare_requirement(values: MutableSequence[object], package: str) -> None:
+    for position in reversed(range(len(values))):
+        raw = values[position]
+        if not isinstance(raw, str):
+            continue
+        try:
+            requirement = Requirement(raw)
+        except InvalidRequirement:
+            continue
+        if (
+            canonicalize_name(requirement.name) == package
+            and not requirement.extras
+            and not requirement.specifier
+            and requirement.marker is None
+            and requirement.url is None
+        ):
+            values.pop(position)
 
 
 def _ensure_numpy_lt2(values: MutableSequence[object], scope: Scope) -> None:
