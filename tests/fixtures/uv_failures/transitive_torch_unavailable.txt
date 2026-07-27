@@ -1,0 +1,2 @@
+× No solution found when resolving dependencies:
+╰─▶ Because vllm==0.25.0 depends on torch==2.10.0 and no version of torch==2.10.0 is available, we can conclude that vllm==0.25.0 cannot be used.

@@ -17,7 +17,7 @@ from uv_torch_compass.domain import (
     Scope,
     ScopedRequirement,
 )
-from uv_torch_compass.errors import CommandError
+from uv_torch_compass.errors import CandidateResolutionError, CommandError
 from uv_torch_compass.nvidia import NvidiaDevice, NvidiaSnapshot
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.uv_commands import UvCommandClient
@@ -199,10 +199,12 @@ class ProbeUv:
         create_codes: list[int] | None = None,
         install_codes: list[int] | None = None,
         numpy_code: int = 0,
+        install_error: str = "install failed",
     ) -> None:
         self.create_codes = create_codes or [0]
         self.install_codes = install_codes or [0]
         self.numpy_code = numpy_code
+        self.install_error = install_error
 
     def create_venv(self, path: Path, python: Path, *, cwd: Path) -> CommandResult:
         del path, python, cwd
@@ -215,7 +217,7 @@ class ProbeUv:
         metadata = path / "lib/python/site-packages/torch-2.7.0.dist-info/METADATA"
         metadata.parent.mkdir(parents=True, exist_ok=True)
         metadata.write_text("Name: torch\nVersion: 2.7.0\n", encoding="utf-8")
-        return CommandResult(self.install_codes.pop(0), "", "install failed")
+        return CommandResult(self.install_codes.pop(0), "", self.install_error)
 
     def install_numpy_lt2(self, path: Path) -> CommandResult:
         del path
@@ -333,6 +335,42 @@ def test_install_failure_is_currently_reported_without_package_context(
         service.find_working_candidate((BackendCandidate("cu121"),))
 
     assert reporter.warnings == ["candidate cu121: installation failed"]
+
+
+def test_install_failure_preserves_structured_resolution_context(
+    tmp_path: Path,
+) -> None:
+    service = _service(
+        tmp_path,
+        ProbeUv(
+            install_codes=[1],
+            install_error=(
+                "Because vllm==0.25.0 depends on torch==2.10.0 and "
+                "no version of torch==2.10.0 is available"
+            ),
+        ),
+        ProbeRunner([]),
+        ProbeReporter(),
+    )
+    service.requirements = ProjectRequirements(
+        ">=3.10",
+        "",
+        (ScopedRequirement(Scope("base"), "vllm>=0.25.0"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate((BackendCandidate("cu121"),))
+
+    attempts = captured.value.attempts
+    assert len(attempts) == 1
+    failure = attempts[0].failure
+    assert failure is not None
+    assert failure.package is not None
+    assert failure.package.name == "torch"
+    assert failure.index is not None
+    assert failure.index.name == "pytorch-cu121"
 
 
 def test_probe_does_not_retry_non_numpy_or_failed_repair(tmp_path: Path) -> None:

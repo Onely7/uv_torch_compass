@@ -1,0 +1,2 @@
+× No solution found when resolving dependencies:
+╰─▶ Because project-a depends on numpy==2.0.0 and project-b depends on numpy==2.1.0, project-a and project-b are incompatible.

@@ -543,6 +543,51 @@ class CandidateAttempt:
     status: str
     reason: str
     compatibility: str
+    failure: ResolutionFailure | None = None
+
+
+class ResolutionFailureKind(str, Enum):
+    """Classify a candidate failure without exposing uv implementation details."""
+
+    NO_COMPATIBLE_DISTRIBUTION = "no-compatible-distribution"
+    DEPENDENCY_CONFLICT = "dependency-conflict"
+    WHEEL_UNAVAILABLE = "wheel-unavailable"
+    BUILD_FAILURE = "build-failure"
+    NETWORK = "network"
+    AUTHENTICATION = "authentication"
+    TIMEOUT = "timeout"
+    RUNTIME_VALIDATION = "runtime-validation"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class FailedPackage:
+    """Identify the package constraint implicated by uv when available."""
+
+    name: str
+    version: str | None = None
+    requirement: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FailedIndex:
+    """Identify the package index implicated by a candidate failure."""
+
+    name: str
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionFailure:
+    """Describe an actionable, redacted candidate resolution failure."""
+
+    kind: ResolutionFailureKind
+    summary: str
+    package: FailedPackage | None = None
+    required_by: tuple[str, ...] = ()
+    index: FailedIndex | None = None
+    platform: str | None = None
+    suggestions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
