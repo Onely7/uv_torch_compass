@@ -31,6 +31,7 @@ flowchart TD
     Metadata[Read installed package metadata<br/>Find transitive PyTorch packages]
     Runtime[Verify resolved CUDA components<br/>Run tensor and library checks]
     CandidateResult{Did the candidate pass?}
+    Diagnose[Classify the redacted uv failure<br/>Record package, requirement, and index]
     More{Is another candidate available?}
     Selected[Select the first candidate that passed]
     Action{plan or apply?}
@@ -58,7 +59,7 @@ flowchart TD
     Driver -- No --> CPU --> Roots
     Roots --> Temporary --> Metadata --> Runtime --> CandidateResult
     CandidateResult -- Yes --> Selected --> Action
-    CandidateResult -- No --> More
+    CandidateResult -- No --> Diagnose --> More
     More -- Yes --> Roots
     More -- No --> Failed
 
@@ -71,6 +72,8 @@ flowchart TD
 ```
 
 Candidate tests run in temporary virtual environments, so failed candidates do not modify the target project. Only `apply` writes the selected index. If an error occurs after backups are created, the tool restores the original files and attempts to recover the project environment.
+
+When installation fails, uv-torch-compass interprets known uv resolver forms after removing credentials and control characters. It records the implicated package, version requirement, dependency path, index, and platform only when the uv output or candidate policy establishes them. Unknown formats are reported as unknown rather than guessed, with the complete redacted output retained in the private log.
 
 ## Python selection
 

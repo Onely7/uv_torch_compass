@@ -31,6 +31,7 @@ flowchart TD
     Metadata[install 済み metadata を読み<br/>推移的な PyTorch package を見つける]
     Runtime[解決した CUDA component を確認し<br/>tensor と library の検証を行う]
     CandidateResult{候補は検証を通過したか}
+    Diagnose[認証情報を除いた uv の失敗を分類し<br/>package、requirement、index を記録する]
     More{次の候補があるか}
     Selected[最初に通過した候補を選ぶ]
     Action{plan か apply か}
@@ -58,7 +59,7 @@ flowchart TD
     Driver -- いいえ --> CPU --> Roots
     Roots --> Temporary --> Metadata --> Runtime --> CandidateResult
     CandidateResult -- はい --> Selected --> Action
-    CandidateResult -- いいえ --> More
+    CandidateResult -- いいえ --> Diagnose --> More
     More -- はい --> Roots
     More -- いいえ --> Failed
 
@@ -71,6 +72,8 @@ flowchart TD
 ```
 
 候補の検証には一時的な virtual environment を使うため、候補が失敗しても対象 project は変更されません。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。
+
+install が失敗した場合は、認証情報と制御文字を除去してから、既知の uv resolver形式を解析します。原因の package、version requirement、依存経路、index、platformは、uv出力または候補方針から確定できる場合だけ記録します。未知の形式を推測で補わず、`unknown`として報告し、完全なredaction済み出力をprivate logへ残します。
 
 ## Python の選択
 

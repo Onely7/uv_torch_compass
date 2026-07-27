@@ -74,7 +74,7 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | CUDA runtime component does not match the backend | Recreate the synchronized environment from the lockfile and inspect index configuration; the installed CUDA major/minor must match `cuNNN`. |
 | native architecture is missing in minor mode | The wheel lacks native machine code for the selected GPU. Choose another backend or update the driver and return to strict mode. |
 | compile probe failed | Re-run with `--probe-profile standard` to separate normal CUDA operation from the optional Inductor/Triton path. |
-| no usable backend | Inspect candidate reasons, version constraints, network/index access, disk space, and GPU runtime errors. |
+| no usable backend | Read each failed candidate's package, requirement, dependency path, and index. Use its suggestions; inspect the private log when the failure kind is `unknown`. |
 | `uv lock` failure | Read uv's resolver explanation, including unselected scopes and other workspace members. |
 | `uv sync preflight failed` and a package has no wheel | Inspect the package and platform in uv's message. The tool records the current Linux architecture in `tool.uv.required-environments`, allowing uv to choose a compatible version when one exists. |
 | environment is not synchronized | Run the intended `apply`, or inspect `uv sync --locked --check` output. |

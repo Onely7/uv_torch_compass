@@ -28,6 +28,8 @@ dependencies = ["vllm==0.19.1"]
 
 候補環境では、選択した依存グラフ全体を解決します。`vllm` が特定の `torch`、`torchvision`、`torchaudio` version を要求する場合、その制約を backend 選択にも反映します。適用時には、uv の明示的な PyTorch index に必要な直接依存だけを source anchor として補い、ツールが追加したものとして記録します。元の framework 依存は維持されます。
 
+許可された CUDA index に必要な PyTorch build がなければ、project を変更する前に失敗します。結果には、原因の package と requirement、それを導入した package、試した index、次に取れる対応を表示します。uv の完全な出力は、認証情報を除去してprivate logだけに残します。
+
 対象プロジェクトで、PyPI に公開された版を使い、まず候補を検証して変更案を確認します。
 
 ```bash

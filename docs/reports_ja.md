@@ -20,14 +20,14 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout には最後の JSON object 一つだけを出します。進捗と警告は stderr へ送るため、stdout の redirect から解析可能な文書を得られます。
 
-schema version は `3` で、次の top-level field を含みます。
+schema version は `4` で、次の top-level field を含みます。
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "operation": "plan",
-  "status": "planned",
-  "exit_code": 0,
+  "status": "failed",
+  "exit_code": 1,
   "applied": false,
   "target": "/work/app/pyproject.toml",
   "workspace": "/work/app",
@@ -39,15 +39,32 @@ schema version は `3` で、次の top-level field を含みます。
   "python": {},
   "candidate_attempts": [
     {
-      "backend": "cu129",
-      "stage": "policy",
-      "status": "skipped",
-      "reason": "driver does not provide strict support",
-      "compatibility": "unsupported"
+      "backend": "cu121",
+      "stage": "install",
+      "status": "failed",
+      "reason": "The required package build is unavailable from this index.",
+      "compatibility": "strict",
+      "failure": {
+        "kind": "no-compatible-distribution",
+        "summary": "The required package build is unavailable from this index.",
+        "package": {
+          "name": "torch",
+          "version": "2.10.0",
+          "requirement": "torch==2.10.0"
+        },
+        "required_by": ["vllm>=0.25.0", "torch==2.10.0"],
+        "index": {
+          "name": "pytorch-cu121",
+          "url": "https://download.pytorch.org/whl/cu121"
+        },
+        "platform": null,
+        "suggestions": ["Select a dependency version compatible with a published PyTorch build."]
+      }
     }
   ],
-  "selected_backend": "cu124",
-  "selected_index": "https://download.pytorch.org/whl/cu124",
+  "resolution_failure": {},
+  "selected_backend": "",
+  "selected_index": "",
   "selected_gpu": {},
   "resolved_packages": {},
   "dependency_roots": [],
@@ -64,14 +81,14 @@ schema version は `3` で、次の top-level field を含みます。
 
 実際の文書には、対象 package、変更案の diff、実行 log、秘密情報を含まない診断 metadata も入ります。GPU metadata には選択 device、NVIDIA driver version、`nvidia-smi` が示す CUDA 上限を記録します。
 
-各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility` を持ちます。方針で除外した候補は install 前に `skipped` として記録します。CUDA の `validation` には次を含みます。
+各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility` と、省略可能な `failure` を持ちます。方針で除外した候補はinstall前に `skipped` として記録します。`resolution_failure`は、全候補の失敗package、index、重複除去した対応案を集約します。uv出力から確定できないfieldは推測せずJSON `null`にします。CUDA の `validation` には次を含みます。
 
 - 解決した PyTorch CUDA runtime と runtime component version
 - 必要な最低 driver と、`strict`、`minor`、`unsupported` の判定
 - GPU compute capability と PyTorch の compiled architecture
 - CUDA tensor、cuBLAS、cuDNN、native architecture、NumPy、`torchvision`、`torchaudio`、必要に応じた compile の結果
 
-候補の詳細にはマスク済みの要約を記録し、生の command data は残しません。field を利用する側は、先に `schema_version` を確認してください。
+候補の詳細には長さを制限したredaction済み要約を記録し、生の command data は残しません。完全なredaction済みuv出力はprivate logに残ります。fieldを利用する側は、先に `schema_version` を確認してください。
 
 status は次のいずれかです。
 

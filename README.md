@@ -28,6 +28,8 @@ dependencies = ["vllm==0.19.1"]
 
 The candidate environment resolves the complete selected dependency graph. If `vllm` requires a particular `torch`, `torchvision`, or `torchaudio` version, that constraint participates in backend selection. The applied configuration adds only the direct source anchors needed for uv's explicit PyTorch index, records those anchors as tool-managed state, and preserves the framework requirement.
 
+If no allowed CUDA index contains the required PyTorch build, the command fails before changing the project. The summary identifies the package and requirement, the package that introduced it, the attempted index, and practical next steps; complete redacted uv output remains in the private log.
+
 From the target project, run a version published on PyPI to verify a candidate and preview the change:
 
 ```bash
