@@ -213,16 +213,11 @@ class ProjectRequirements:
     @property
     def probe_requirements(self) -> tuple[str, ...]:
         """Return de-duplicated requirements installed in candidate environments."""
-        values: list[str] = []
-        seen: set[str] = set()
-        for item in self.selected:
-            if item.package not in {*PYTORCH_PACKAGES, "numpy"}:
-                continue
-            normalized = str(item.requirement)
-            if normalized not in seen:
-                seen.add(normalized)
-                values.append(normalized)
-        return tuple(values)
+        # Import locally to keep the foundational domain module independent of
+        # the policy object that consumes its requirement values.
+        from uv_torch_compass.dependency_roots import SelectedDependencyRoots
+
+        return SelectedDependencyRoots(self.selected).legacy_probe_requirements
 
     def has_package(self, package: str) -> bool:
         """Return whether the selected scopes contain a direct package requirement."""
