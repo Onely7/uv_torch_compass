@@ -315,6 +315,26 @@ def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
     assert any("valid JSON" in warning for warning in reporter.warnings)
 
 
+def test_install_failure_is_currently_reported_without_package_context(
+    tmp_path: Path,
+) -> None:
+    reporter = ProbeReporter()
+    service = _service(
+        tmp_path,
+        ProbeUv(install_codes=[1]),
+        ProbeRunner([]),
+        reporter,
+    )
+
+    with pytest.raises(
+        CommandError,
+        match=r"no usable PyTorch backend was found; attempted: cu121",
+    ):
+        service.find_working_candidate((BackendCandidate("cu121"),))
+
+    assert reporter.warnings == ["candidate cu121: installation failed"]
+
+
 def test_probe_does_not_retry_non_numpy_or_failed_repair(tmp_path: Path) -> None:
     reporter = ProbeReporter()
     non_numpy = _service(

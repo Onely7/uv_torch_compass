@@ -17,7 +17,7 @@ from uv_torch_compass.domain import (
     ProbeProfile,
     RuntimeReport,
 )
-from uv_torch_compass.errors import ConfigurationError
+from uv_torch_compass.errors import CommandError, ConfigurationError
 from uv_torch_compass.workspace import WorkspaceContext
 
 
@@ -277,6 +277,41 @@ def test_main_reports_operational_failures(
     captured = capsys.readouterr()
     assert status == 1
     assert expected in json.loads(captured.out)["errors"][0]
+
+
+def test_candidate_failure_currently_loses_attempts_at_cli_boundary(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write_project(pyproject)
+
+    class FailingApplication:
+        def __init__(self, *_arguments) -> None:
+            pass
+
+        def run(self):
+            raise CommandError("no usable PyTorch backend was found; attempted: cu121")
+
+    monkeypatch.setattr("uv_torch_compass.cli.CompassApplication", FailingApplication)
+    monkeypatch.setattr(
+        "uv_torch_compass.cli.UvCommandClient.discover",
+        lambda *_arguments, **_keywords: object(),
+    )
+
+    status = main(
+        [
+            "plan",
+            "--pyproject",
+            str(pyproject),
+            "--output-format",
+            "json",
+        ]
+    )
+
+    document = json.loads(capsys.readouterr().out)
+    assert status == 1
+    assert document["schema_version"] == 3
+    assert document["candidate_attempts"] == []
 
 
 def test_main_reports_log_creation_failure(tmp_path: Path, capsys) -> None:
