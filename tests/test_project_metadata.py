@@ -105,6 +105,71 @@ def test_transitive_only_pytorch_project_adds_managed_source_anchor(
     assert "added managed PyTorch source anchors: torch" in changes
 
 
+def test_managed_source_anchors_are_idempotent_and_replaceable(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["vllm", "torch"]
+
+        [tool.uv-torch-compass.state]
+        managed-source-anchors = ["torch"]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    )
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cpu"),
+        numpy_lt2_required=False,
+        source_packages=frozenset({"torchvision"}),
+    )
+
+    document = tomlkit.parse(content).unwrap()
+    assert document["project"]["dependencies"] == ["vllm", "torchvision"]
+    assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
+        "torchvision"
+    ]
+
+
+def test_rejects_invalid_managed_source_anchor_state(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["vllm"]
+
+        [tool.uv-torch-compass.state]
+        managed-source-anchors = ["not-pytorch"]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    )
+
+    with pytest.raises(ProjectUpdateError, match="unknown package"):
+        render_project_configuration(
+            pyproject,
+            requirements=requirements,
+            overrides=(),
+            backend=BackendCandidate("cpu"),
+            numpy_lt2_required=False,
+            source_packages=frozenset({"torch"}),
+        )
+
+
 def test_render_preserves_comments_guards_old_sources_and_is_idempotent(
     tmp_path: Path,
 ) -> None:

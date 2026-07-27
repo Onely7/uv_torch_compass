@@ -551,7 +551,7 @@ def _managed_source_anchors(state: Mapping[str, object]) -> set[str]:
     raw = state.get("managed-source-anchors", [])
     if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
         raise ProjectUpdateError("managed-source-anchors must be an array of strings")
-    anchors = {canonicalize_name(item) for item in raw}
+    anchors = {str(canonicalize_name(item)) for item in cast(list[str], raw)}
     if not anchors.issubset(PYTORCH_PACKAGES):
         raise ProjectUpdateError("managed-source-anchors contains an unknown package")
     return anchors
