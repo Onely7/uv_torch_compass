@@ -200,24 +200,21 @@ class ProbeUv:
     def __init__(
         self,
         *,
-        create_codes: list[int] | None = None,
         install_codes: list[int] | None = None,
         numpy_code: int = 0,
         install_error: str = "install failed",
     ) -> None:
-        self.create_codes = create_codes or [0]
         self.install_codes = install_codes or [0]
         self.numpy_code = numpy_code
         self.install_error = install_error
 
-    def create_venv(self, path: Path, python: Path, *, cwd: Path) -> CommandResult:
-        del path, python, cwd
-        return CommandResult(self.create_codes.pop(0), "", "venv failed")
-
-    def install_candidate(
-        self, path: Path, requirements, candidate, *, dry_run: bool = False
+    def sync_candidate(
+        self,
+        path: Path,
+        project_dir: Path,
+        python: Path,
     ) -> CommandResult:
-        del requirements, candidate, dry_run
+        del project_dir, python
         metadata = path / "lib/python/site-packages/torch-2.7.0.dist-info/METADATA"
         metadata.parent.mkdir(parents=True, exist_ok=True)
         metadata.write_text("Name: torch\nVersion: 2.7.0\n", encoding="utf-8")
@@ -254,6 +251,12 @@ class ProbeReporter:
 def _service(
     tmp_path: Path, uv: ProbeUv, runner: ProbeRunner, reporter: ProbeReporter
 ) -> CandidateProbeService:
+    target = tmp_path / "pyproject.toml"
+    if not target.exists():
+        target.write_text(
+            '[project]\nname = "target"\nversion = "0.1.0"\n',
+            encoding="utf-8",
+        )
     scope = Scope("base")
     requirements = ProjectRequirements(
         ">=3.10",
@@ -274,6 +277,7 @@ def _service(
         None,
         CompatibilityPolicy.STRICT,
         ProbeProfile.STANDARD,
+        target,
     )
 
 
@@ -302,7 +306,7 @@ def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
     reporter = ProbeReporter()
     service = _service(
         tmp_path,
-        ProbeUv(create_codes=[1, 0, 0], install_codes=[1, 0]),
+        ProbeUv(install_codes=[1, 1, 0]),
         ProbeRunner([CommandResult(0, "not-json", "")]),
         reporter,
     )
@@ -316,7 +320,7 @@ def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
             )
         )
 
-    assert any("venv creation" in warning for warning in reporter.warnings)
+    assert any("installation failed" in warning for warning in reporter.warnings)
     assert any("installation" in warning for warning in reporter.warnings)
     assert any("valid JSON" in warning for warning in reporter.warnings)
 
@@ -381,10 +385,13 @@ def test_install_timeout_is_preserved_as_candidate_diagnostic(
     tmp_path: Path,
 ) -> None:
     class TimeoutUv(ProbeUv):
-        def install_candidate(
-            self, path: Path, requirements, candidate, *, dry_run: bool = False
+        def sync_candidate(
+            self,
+            path: Path,
+            project_dir: Path,
+            python: Path,
         ) -> CommandResult:
-            del path, requirements, candidate, dry_run
+            del path, project_dir, python
             raise CommandTimeoutError("timed out")
 
     service = _service(
@@ -427,12 +434,13 @@ def test_transitive_torchaudio_uses_the_installed_probe_contract(
     tmp_path: Path,
 ) -> None:
     class TransitiveAudioUv(ProbeUv):
-        def install_candidate(
-            self, path: Path, requirements, candidate, *, dry_run: bool = False
+        def sync_candidate(
+            self,
+            path: Path,
+            project_dir: Path,
+            python: Path,
         ) -> CommandResult:
-            result = super().install_candidate(
-                path, requirements, candidate, dry_run=dry_run
-            )
+            result = super().sync_candidate(path, project_dir, python)
             metadata = (
                 path / "lib/python/site-packages/torchaudio-2.7.0.dist-info/METADATA"
             )

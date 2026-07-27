@@ -164,6 +164,8 @@ class CompassApplication:
                 nvidia=nvidia,
                 compatibility_policy=self.options.cuda_compatibility,
                 probe_profile=self.options.probe_profile,
+                target_pyproject=self.options.pyproject,
+                workspace_members=workspace.members,
             )
             verified = probe.find_working_candidate(
                 candidate_plan.candidates,

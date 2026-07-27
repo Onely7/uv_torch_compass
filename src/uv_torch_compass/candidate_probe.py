@@ -7,6 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from uv_torch_compass.candidate_project import render_candidate_project
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
@@ -62,6 +63,8 @@ class CandidateProbeService:
     nvidia: NvidiaSnapshot | None
     compatibility_policy: CompatibilityPolicy
     probe_profile: ProbeProfile
+    target_pyproject: Path
+    workspace_members: tuple[tuple[str, Path], ...] = ()
 
     def find_working_candidate(
         self,
@@ -123,32 +126,33 @@ class CandidateProbeService:
         )
 
     def _probe_candidate(self, candidate: BackendCandidate) -> CandidateProbeResult:
-        venv = Path(
+        candidate_root = Path(
             tempfile.mkdtemp(
                 prefix=f"candidate-{candidate.value}-", dir=self.temporary_root
             )
         )
+        venv = candidate_root / "environment"
         self.reporter.info(f"testing backend candidate {candidate.value}")
         try:
-            created = self.uv.create_venv(
-                venv, self.project_python, cwd=self.temporary_root
+            project = render_candidate_project(
+                self.target_pyproject,
+                destination=candidate_root / "project",
+                requirements=self.requirements.probe_requirements,
+                candidate=candidate,
+                workspace_members=dict(self.workspace_members),
             )
-        except CommandTimeoutError:
-            return CandidateProbeResult.failed(timeout_failure("environment creation"))
-        self.reporter.detail(created.stdout + created.stderr)
-        if created.returncode != 0:
-            self.reporter.warn(f"candidate {candidate.value}: venv creation failed")
-            return CandidateProbeResult.failed(
-                runtime_failure(
-                    "The candidate virtual environment could not be created."
-                )
-            )
-        try:
-            installed = self.uv.install_candidate(
-                venv, self.requirements.probe_requirements, candidate
+            installed = self.uv.sync_candidate(
+                venv,
+                project.parent,
+                self.project_python,
             )
         except CommandTimeoutError:
             return CandidateProbeResult.failed(timeout_failure("installation"))
+        except ConfigurationError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return CandidateProbeResult.failed(
+                runtime_failure("The candidate source policy could not be prepared.")
+            )
         self.reporter.detail(installed.stdout + installed.stderr)
         if installed.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: installation failed")

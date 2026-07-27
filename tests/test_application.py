@@ -124,15 +124,13 @@ class FakeUv:
         del request, project_dir
         return CommandResult(0, "", "")
 
-    def create_venv(self, path: Path, python: Path, *, cwd: Path) -> CommandResult:
-        del python, cwd
-        (path / "bin").mkdir(parents=True)
-        return CommandResult(0, "", "")
-
-    def install_candidate(
-        self, venv: Path, requirements, candidate, *, dry_run: bool = False
+    def sync_candidate(
+        self,
+        venv: Path,
+        project_dir: Path,
+        python: Path,
     ) -> CommandResult:
-        del requirements, candidate, dry_run
+        del project_dir, python
         metadata = venv / "lib/python/site-packages/torch-2.7.0.dist-info/METADATA"
         metadata.parent.mkdir(parents=True, exist_ok=True)
         metadata.write_text("Name: torch\nVersion: 2.7.0\n", encoding="utf-8")

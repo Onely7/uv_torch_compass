@@ -14,7 +14,6 @@ from uv_torch_compass.command_runner import (
     resolve_executable,
     sanitized_environment,
 )
-from uv_torch_compass.domain import BackendCandidate, Channel
 
 _BACKEND_HELP_PATTERN = re.compile(r"\b(?:auto|cpu|cu[0-9]{2,3})\b", re.ASCII)
 
@@ -82,36 +81,27 @@ class UvCommandClient:
         """Install an interpreter satisfying a uv Python request."""
         return self._heavy(["python", "install", request], cwd=project_dir)
 
-    def create_venv(self, path: Path, python: Path, *, cwd: Path) -> CommandResult:
-        """Create an isolated candidate environment without project configuration."""
-        return self._heavy(
-            ["--no-config", "venv", str(path), "--python", str(python)], cwd=cwd
-        )
-
-    def install_candidate(
+    def sync_candidate(
         self,
         venv: Path,
-        requirements: Sequence[str],
-        candidate: BackendCandidate,
-        *,
-        dry_run: bool = False,
+        project_dir: Path,
+        python: Path,
     ) -> CommandResult:
-        """Resolve or install selected requirements for one backend candidate."""
+        """Resolve and install one isolated candidate project."""
         arguments: list[str | Path] = [
-            "--no-config",
-            "pip",
-            "install",
+            "sync",
+            "--project",
+            str(project_dir),
             "--python",
-            str(venv),
-            *requirements,
+            str(python),
+            "--no-install-project",
+            "--no-dev",
         ]
-        if candidate.channel is Channel.NIGHTLY:
-            arguments.extend(["--index", candidate.index_url, "--prerelease", "allow"])
-        else:
-            arguments.extend(["--torch-backend", candidate.value])
-        if dry_run:
-            arguments.append("--dry-run")
-        return self._heavy(arguments)
+        return self._heavy(
+            arguments,
+            cwd=project_dir,
+            overrides={"UV_PROJECT_ENVIRONMENT": str(venv)},
+        )
 
     def install_numpy_lt2(self, venv: Path) -> CommandResult:
         """Constrain NumPy after a candidate demonstrates bridge incompatibility."""
