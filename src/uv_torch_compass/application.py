@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.backend_selection import build_candidate_plan
-from uv_torch_compass.candidate_probe import CandidateProbeService, ProbeOutcome
+from uv_torch_compass.candidate_probe import CandidateProbeService
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
@@ -34,6 +34,7 @@ from uv_torch_compass.errors import (
 )
 from uv_torch_compass.nvidia import NvidiaInspector, NvidiaSnapshot
 from uv_torch_compass.platform_requirement import RequiredEnvironment
+from uv_torch_compass.probe_contract import ProbeOutcome
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
@@ -42,44 +43,12 @@ from uv_torch_compass.project_metadata import (
 from uv_torch_compass.python_selection import PythonSelector, ResolvedPython
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.safe_transaction import (
-    FileSnapshot,
     SafeProjectTransaction,
     WorkspaceAdvisoryLock,
 )
+from uv_torch_compass.target_state import ApplicationResult, TargetState
 from uv_torch_compass.uv_commands import UvCommandClient
 from uv_torch_compass.workspace import WorkspaceContext, resolve_workspace
-
-
-@dataclass(frozen=True, slots=True)
-class ApplicationResult:
-    """Return a command outcome together with its resolved workspace."""
-
-    outcome: CommandOutcome
-    workspace: WorkspaceContext
-
-
-@dataclass(frozen=True, slots=True)
-class _TargetState:
-    pyproject: FileSnapshot
-    lockfile: FileSnapshot
-
-    @classmethod
-    def capture(cls, workspace: WorkspaceContext) -> _TargetState:
-        return cls(
-            FileSnapshot.capture(workspace.project_dir / "pyproject.toml"),
-            FileSnapshot.capture(workspace.lockfile),
-        )
-
-    def require_unchanged(self, operation: Operation) -> None:
-        for expected in (self.pyproject, self.lockfile):
-            current = FileSnapshot.capture(expected.path)
-            if (current.existed, current.digest) != (
-                expected.existed,
-                expected.digest,
-            ):
-                raise ExternalModificationError(
-                    f"{expected.path} changed while {operation.value} was running"
-                )
 
 
 @dataclass(slots=True)
@@ -100,7 +69,7 @@ class CompassApplication:
         self._preflight()
         self.reporter.phase("inspect", "reading the target project and workspace")
         workspace = resolve_workspace(self.options.pyproject, self.uv)
-        initial_state = _TargetState.capture(workspace)
+        initial_state = TargetState.capture(workspace)
         requirements = read_project_requirements(
             self.options.pyproject,
             extras=self.options.extras,
@@ -154,7 +123,7 @@ class CompassApplication:
         workspace: WorkspaceContext,
         requirements: ProjectRequirements,
         python: ResolvedPython,
-        initial_state: _TargetState,
+        initial_state: TargetState,
     ) -> CommandOutcome:
         self.reporter.phase("resolve", "building backend candidates")
         nvidia, gpu_warnings = self._inspect_gpu(
@@ -349,7 +318,7 @@ class CompassApplication:
         workspace: WorkspaceContext,
         requirements: ProjectRequirements,
         python: ResolvedPython,
-        initial_state: _TargetState,
+        initial_state: TargetState,
     ) -> CommandOutcome:
         self.reporter.phase(
             "verify", "checking current metadata, lock, and environment"

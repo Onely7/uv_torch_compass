@@ -459,6 +459,7 @@ class RuntimeReport:
         *,
         expected_profile: ProbeProfile,
         require_native_architecture: bool,
+        expected_packages: frozenset[str] | None = None,
     ) -> None:
         """Confirm every reported check has the result required by this run.
 
@@ -471,13 +472,22 @@ class RuntimeReport:
                 f"runtime probe reported profile {self.probe_profile!r}, expected "
                 f"{expected_profile.value!r}"
             )
+        packages = (
+            expected_packages
+            if expected_packages is not None
+            else frozenset(
+                package
+                for package in PYTORCH_PACKAGES
+                if requirements.has_package(package)
+            )
+        )
         expected = {
             "numpy_bridge_test": "PASS",
             "torchvision_test": (
-                "PASS" if requirements.has_package("torchvision") else "NOT_REQUESTED"
+                "PASS" if "torchvision" in packages else "NOT_REQUESTED"
             ),
             "torchaudio_test": (
-                "PASS" if requirements.has_package("torchaudio") else "NOT_REQUESTED"
+                "PASS" if "torchaudio" in packages else "NOT_REQUESTED"
             ),
             "compile_test": (
                 "PASS" if expected_profile is ProbeProfile.COMPILE else "NOT_REQUESTED"

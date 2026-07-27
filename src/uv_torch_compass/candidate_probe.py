@@ -19,7 +19,6 @@ from uv_torch_compass.domain import (
     CandidateAttempt,
     ProbeProfile,
     ProjectRequirements,
-    ResolutionFailure,
     RuntimeReport,
 )
 from uv_torch_compass.errors import (
@@ -30,6 +29,11 @@ from uv_torch_compass.errors import (
 )
 from uv_torch_compass.installed_metadata import read_installed_distributions
 from uv_torch_compass.nvidia import NvidiaSnapshot
+from uv_torch_compass.probe_contract import (
+    CandidateProbeResult,
+    ProbeContract,
+    ProbeOutcome,
+)
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.resolution_diagnostics import (
     interpret_uv_failure,
@@ -37,40 +41,6 @@ from uv_torch_compass.resolution_diagnostics import (
     timeout_failure,
 )
 from uv_torch_compass.uv_commands import UvCommandClient
-
-
-@dataclass(frozen=True, slots=True)
-class ProbeOutcome:
-    """Contain the first verified runtime and any required NumPy repair."""
-
-    runtime: RuntimeReport
-    compatibility: CompatibilityDecision
-    numpy_lt2_required: bool
-    attempts: tuple[CandidateAttempt, ...]
-    installed_pytorch: frozenset[str] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateProbeResult:
-    """Represent either a verified candidate or a generic rejected candidate."""
-
-    outcome: ProbeOutcome | None
-    failure: ResolutionFailure | None
-
-    def __post_init__(self) -> None:
-        """Require exactly one success outcome or failure reason."""
-        if (self.outcome is None) == (self.failure is None):
-            raise ValueError("candidate result requires either an outcome or a failure")
-
-    @classmethod
-    def passed(cls, outcome: ProbeOutcome) -> CandidateProbeResult:
-        """Create a successful candidate result."""
-        return cls(outcome, None)
-
-    @classmethod
-    def failed(cls, failure: ResolutionFailure) -> CandidateProbeResult:
-        """Create a failed candidate result."""
-        return cls(None, failure)
 
 
 @dataclass(slots=True)
@@ -204,11 +174,18 @@ class CandidateProbeService:
                 runtime_failure("The selected dependencies did not install torch.")
             )
 
-        validation = self._run_probe(venv, candidate, installed_pytorch)
+        contract = ProbeContract(
+            installed_pytorch,
+            frozenset(
+                package
+                for package in ("torch", "torchvision", "torchaudio")
+                if self.requirements.has_package(package)
+            ),
+            self.probe_profile,
+        )
+        validation = self._run_probe(venv, candidate, contract)
         if validation.returncode == 0:
-            outcome = self._parse_success(
-                validation.stdout, candidate, False, installed_pytorch
-            )
+            outcome = self._parse_success(validation.stdout, candidate, False, contract)
             return (
                 CandidateProbeResult.passed(outcome)
                 if outcome is not None
@@ -236,7 +213,7 @@ class CandidateProbeService:
                     "The NumPy compatibility repair could not be installed."
                 )
             )
-        validation = self._run_probe(venv, candidate, installed_pytorch)
+        validation = self._run_probe(venv, candidate, contract)
         self.reporter.detail(validation.stdout + validation.stderr)
         if validation.returncode != 0:
             return CandidateProbeResult.failed(
@@ -244,9 +221,7 @@ class CandidateProbeService:
                     "The candidate failed after the NumPy compatibility repair."
                 )
             )
-        outcome = self._parse_success(
-            validation.stdout, candidate, True, installed_pytorch
-        )
+        outcome = self._parse_success(validation.stdout, candidate, True, contract)
         return (
             CandidateProbeResult.passed(outcome)
             if outcome is not None
@@ -259,7 +234,7 @@ class CandidateProbeService:
         self,
         venv: Path,
         candidate: BackendCandidate,
-        installed_pytorch: frozenset[str],
+        contract: ProbeContract,
     ):
         expected = candidate.value if candidate.is_concrete else None
         arguments: list[str | Path] = [venv / "bin" / "python", self.runtime_probe]
@@ -271,9 +246,9 @@ class CandidateProbeService:
             and self._compatibility_for(candidate).level is CompatibilityLevel.MINOR
         ):
             arguments.append("--require-native-architecture")
-        if "torchvision" in installed_pytorch:
+        if contract.validates("torchvision"):
             arguments.append("--validate-torchvision")
-        if "torchaudio" in installed_pytorch:
+        if contract.validates("torchaudio"):
             arguments.append("--validate-torchaudio")
         overrides = (
             {"CUDA_VISIBLE_DEVICES": self.cuda_device} if self.cuda_device else None
@@ -290,7 +265,7 @@ class CandidateProbeService:
         output: str,
         candidate: BackendCandidate,
         numpy_lt2_required: bool,
-        installed_pytorch: frozenset[str],
+        contract: ProbeContract,
     ) -> ProbeOutcome | None:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
@@ -316,10 +291,11 @@ class CandidateProbeService:
         try:
             report.validate_probe_results(
                 self.requirements,
-                expected_profile=self.probe_profile,
+                expected_profile=contract.profile,
                 require_native_architecture=(
                     compatibility.level is CompatibilityLevel.MINOR
                 ),
+                expected_packages=contract.expected_pytorch,
             )
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
@@ -329,7 +305,7 @@ class CandidateProbeService:
             compatibility,
             numpy_lt2_required,
             (),
-            installed_pytorch,
+            contract.installed_pytorch,
         )
 
     def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:
