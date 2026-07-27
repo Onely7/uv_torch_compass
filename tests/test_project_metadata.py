@@ -88,11 +88,17 @@ def test_transitive_only_pytorch_project_adds_managed_source_anchor(
         backend=BackendCandidate("cu129"),
         numpy_lt2_required=False,
         source_packages=frozenset({"torch"}),
+        required_environment=(
+            "sys_platform == 'linux' and platform_machine == 'x86_64'"
+        ),
     )
 
     document = tomlkit.parse(content).unwrap()
     assert document["project"]["dependencies"] == ["vllm==0.19.1", "torch"]
     assert document["tool"]["uv"]["sources"]["torch"]
+    assert document["tool"]["uv"]["required-environments"] == [
+        "sys_platform == 'linux' and platform_machine == 'x86_64'"
+    ]
     assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
         "torch"
     ]

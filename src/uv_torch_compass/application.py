@@ -33,6 +33,7 @@ from uv_torch_compass.errors import (
     ProjectUpdateError,
 )
 from uv_torch_compass.nvidia import NvidiaInspector, NvidiaSnapshot
+from uv_torch_compass.platform_requirement import RequiredEnvironment
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
@@ -208,6 +209,7 @@ class CompassApplication:
             backend=verified.runtime.backend,
             numpy_lt2_required=verified.numpy_lt2_required,
             source_packages=verified.installed_pytorch,
+            required_environment=RequiredEnvironment.current_linux().marker,
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
         metadata = _metadata(python, nvidia)

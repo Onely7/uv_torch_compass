@@ -141,6 +141,7 @@ def render_project_configuration(
     backend: BackendCandidate,
     numpy_lt2_required: bool,
     source_packages: frozenset[str] | None = None,
+    required_environment: str | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     """Render a comment-preserving project update without writing it.
 
@@ -212,6 +213,9 @@ def render_project_configuration(
                 + ", ".join(sorted(managed_anchors))
             )
         uv = _ensure_table(tool, "uv")
+        if required_environment is not None:
+            _ensure_required_environment(uv, required_environment)
+            changes.append("recorded the current Linux installation environment")
         sources = _ensure_table(uv, "sources")
         for package in sorted(packages):
             sources[package] = _linux_source_value(sources.get(package), backend)
@@ -528,6 +532,19 @@ def _dependency_names(values: Iterable[object]) -> set[str]:
         except InvalidRequirement:
             continue
     return names
+
+
+def _ensure_required_environment(uv: Mapping[str, object], marker: str) -> None:
+    raw = uv.get("required-environments")
+    if raw is None:
+        values: list[str] = []
+    elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
+        values = cast(list[str], list(raw))
+    else:
+        raise ProjectUpdateError("tool.uv.required-environments must be an array")
+    if marker not in values:
+        values.append(marker)
+    cast(Any, uv)["required-environments"] = values
 
 
 def _managed_source_anchors(state: Mapping[str, object]) -> set[str]:
