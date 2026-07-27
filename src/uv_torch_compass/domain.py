@@ -55,6 +55,12 @@ class ProbeProfile(str, Enum):
     COMPILE = "compile"
 
 
+class FrameworkProbe(str, Enum):
+    """Identify an opt-in framework integration check."""
+
+    VLLM = "vllm"
+
+
 class BackendKind(str, Enum):
     """Select automatic, CPU-only, CUDA-only, or a concrete CUDA policy."""
 
@@ -209,6 +215,7 @@ class ProjectRequirements:
     selected: tuple[ScopedRequirement, ...]
     all_pytorch: tuple[ScopedRequirement, ...]
     selected_scopes: tuple[Scope, ...]
+    marker_environment: tuple[tuple[str, str], ...] = ()
 
     @property
     def probe_requirements(self) -> tuple[str, ...]:
@@ -268,7 +275,16 @@ class ProjectRequirements:
             selected,
             self.all_pytorch,
             self.selected_scopes,
+            tuple(sorted(environment.items())),
         )
+
+    def environment(self) -> dict[str, str]:
+        """Return the resolved marker environment, or a Linux default."""
+        if self.marker_environment:
+            return dict(self.marker_environment)
+        environment = cast(dict[str, str], dict(default_environment()))
+        environment.update({"sys_platform": "linux", "platform_system": "Linux"})
+        return environment
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +319,7 @@ class RunOptions:
     timeout_seconds: int
     output_format: OutputFormat
     report_file: Path | None
+    framework_probes: tuple[FrameworkProbe, ...] = ()
 
     def __post_init__(self) -> None:
         """Enforce options that must be valid before infrastructure starts."""
@@ -459,6 +476,7 @@ class RuntimeReport:
         *,
         expected_profile: ProbeProfile,
         require_native_architecture: bool,
+        expected_packages: frozenset[str] | None = None,
     ) -> None:
         """Confirm every reported check has the result required by this run.
 
@@ -471,13 +489,22 @@ class RuntimeReport:
                 f"runtime probe reported profile {self.probe_profile!r}, expected "
                 f"{expected_profile.value!r}"
             )
+        packages = (
+            expected_packages
+            if expected_packages is not None
+            else frozenset(
+                package
+                for package in PYTORCH_PACKAGES
+                if requirements.has_package(package)
+            )
+        )
         expected = {
             "numpy_bridge_test": "PASS",
             "torchvision_test": (
-                "PASS" if requirements.has_package("torchvision") else "NOT_REQUESTED"
+                "PASS" if "torchvision" in packages else "NOT_REQUESTED"
             ),
             "torchaudio_test": (
-                "PASS" if requirements.has_package("torchaudio") else "NOT_REQUESTED"
+                "PASS" if "torchaudio" in packages else "NOT_REQUESTED"
             ),
             "compile_test": (
                 "PASS" if expected_profile is ProbeProfile.COMPILE else "NOT_REQUESTED"

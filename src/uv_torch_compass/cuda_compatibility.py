@@ -9,6 +9,11 @@ from packaging.version import InvalidVersion, Version
 
 from uv_torch_compass.errors import ConfigurationError
 
+CATALOG_SOURCE_URL = (
+    "https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/index.html"
+)
+CATALOG_REVIEWED_DATE = "2026-07-28"
+
 
 class CompatibilityPolicy(str, Enum):
     """Select strict driver support or explicit CUDA minor compatibility."""
@@ -138,6 +143,15 @@ def known_cuda_backends() -> tuple[str, ...]:
             reverse=True,
         )
     )
+
+
+def compatibility_catalog_metadata() -> dict[str, object]:
+    """Return provenance and backend coverage for the bundled static catalog."""
+    return {
+        "source": CATALOG_SOURCE_URL,
+        "reviewed": CATALOG_REVIEWED_DATE,
+        "backends": list(known_cuda_backends()),
+    }
 
 
 def decide_compatibility(

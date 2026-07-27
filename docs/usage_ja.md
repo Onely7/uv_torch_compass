@@ -23,7 +23,7 @@ wheel を作り、その artifact を直接検証することもできます。
 ```bash
 cd /path/to/uv_torch_compass
 uv build --no-sources
-uvx --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
+uvx --from dist/uv_torch_compass-<version>-py3-none-any.whl \
   uv-torch-compass --help
 ```
 
@@ -76,6 +76,7 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--cuda-device INDEX_OR_UUID` | `nvidia-smi` が認識する GPU を選ぶ |
 | `--cuda-compatibility strict\|minor` | 通常の driver 対応を要求するか、同じ CUDA major 内の制限付き互換性を明示的に許可する。初期値は `strict` |
 | `--probe-profile standard\|compile` | 標準の library 検証だけを行うか、`torch.compile` も確認する。初期値は `standard` |
+| `--framework-probe vllm` | 選択した framework の連携を検証する。繰り返し指定でき、初期値では無効 |
 | `--log-dir PATH` | 重複しない非公開の実行ログを保存する |
 | `--timeout SECONDS` | install、project 検査、runtime probe、lock、sync の正の timeout を指定する。初期値は 1800 秒 |
 | `--output-format text\|json` | 人向け出力、または最後の JSON object 一つを選ぶ |
@@ -104,6 +105,8 @@ uv-torch-compass plan \
 ```
 
 minor は自動 fallback ではありません。driver の通常サポートより新しい runtime を採用した場合、成功結果にも警告が含まれます。
+
+vLLM probe は、インストール済み metadata、import、native extension、選択された CPU または CUDA platform を確認します。model の取得、model cache の確保、worker の起動は行いません。
 
 ## help と終了コード
 

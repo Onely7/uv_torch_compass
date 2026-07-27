@@ -28,6 +28,8 @@ dependencies = ["vllm==0.19.1"]
 
 候補環境では、選択した依存グラフ全体を解決します。`vllm` が特定の `torch`、`torchvision`、`torchaudio` version を要求する場合、その制約を backend 選択にも反映します。適用時には、uv の明示的な PyTorch index に必要な直接依存だけを source anchor として補い、ツールが追加したものとして記録します。元の framework 依存は維持されます。
 
+候補解決では、関連する uv の constraint、override、private index、選択した path・Git・URL・workspace source も引き継ぎます。検証中の公式 index へ切り替えるのは PyTorch package だけです。
+
 許可された CUDA index に必要な PyTorch build がなければ、project を変更する前に失敗します。結果には、原因の package と requirement、それを導入した package、試した index、次に取れる対応を表示します。uv の完全な出力は、認証情報を除去してprivate logだけに残します。
 
 対象プロジェクトで、PyPI に公開された版を使い、まず候補を検証して変更案を確認します。
@@ -73,9 +75,12 @@ uv-torch-compass plan --backend cuda
 uv-torch-compass plan --backend cu128
 uv-torch-compass plan --channel nightly
 uv-torch-compass plan --probe-profile compile
+uv-torch-compass plan --framework-probe vllm
 ```
 
 channel の初期値は安定版を示す `stable` です。開発版の `nightly` は、明示した場合だけ使います。CUDA minor-version compatibility も `--cuda-compatibility minor` で明示した場合だけ使い、同じ major 系列の新しい CUDA runtime を利用できますが、成功時にも警告が残ります。順番と検証内容は[バックエンドと実行環境の選択](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works_ja.md)を参照してください。
+
+`--framework-probe vllm` も明示した場合だけ実行します。model を取得したり worker を起動したりせず、vLLM の metadata、import、native extension、選択された実行 platform を確認します。
 
 ## 安全性の概要
 
@@ -84,7 +89,7 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 - project 環境を変更する前に、依存グラフ全体を lock し、locked sync の dry run を行います。現在の Linux architecture も uv の必須環境として記録するため、利用できない wheel はインストール開始前に検出されます。
 - 同じディレクトリの一時ファイルを使い、書きかけを見せずに一括置換します。workspace lock により、二つの `apply` が同時に更新することも防ぎます。
 - lock、sync、最終検証、timeout、SIGINT、SIGTERM の失敗時は、ファイルを復元し、環境の復旧も試みます。
-- ログと JSON report は一般的な認証情報をマスクし、所有者だけが読める権限で作ります。
+- ログと JSON report は一般的な認証情報をマスクし、所有者だけが読める権限で作ります。`apply` の成功後に指定した report だけを書き込めなかった場合、project は適用済みのまま、`applied: true` を報告して終了コード `1` になります。
 
 `plan` と `apply` のあとには `git diff` を確認してください。成功後もバックアップは残ります。名前と復旧上の制約は[復旧とトラブル対応](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery_ja.md)で説明します。
 
@@ -95,6 +100,7 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 - PyTorch の公式 stable・nightly index に対応します。stable の失敗から nightly へ自動移行しません。
 - 基本依存、選択した extra・依存グループ、uv workspace、`torchvision`、`torchaudio` に対応します。
 - CUDA の成功には、GPU tensor、cuBLAS、cuDNN、architecture、選択した関連 package の検証が必要です。`--probe-profile compile` では `torch.compile` も確認します。
+- GPU を指定しない場合、見えている device のうち空き memory が最も多いものを選びます。選択を固定するには `--cuda-device` を使います。
 - NVIDIA driver のインストールや更新は行いません。driver 更新後は `plan` と `apply` を再実行してください。
 - 終了コードは、成功が `0`、設定・実行の失敗が `1`、コマンド構文の誤りが `2` です。
 

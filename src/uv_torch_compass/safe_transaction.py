@@ -35,6 +35,10 @@ class FileSnapshot:
         Raises:
             ProjectUpdateError: If an existing file cannot be read.
         """
+        if path.is_symlink():
+            raise ProjectUpdateError(
+                f"transaction target must not be a symlink: {path}"
+            )
         if not path.exists():
             return cls(path, False, b"", 0o644, _digest(b""))
         if not path.is_file():
@@ -119,27 +123,30 @@ class SafeProjectTransaction:
             raise ProjectUpdateError(f"{pyproject} does not exist")
         lockfile_snapshot = FileSnapshot.capture(lockfile)
         stamp = now().strftime("%Y%m%d-%H%M%S")
-        pyproject_backup = _unused_backup_path(pyproject, stamp)
-        lockfile_backup = (
-            _unused_backup_path(lockfile, stamp) if lockfile_snapshot.existed else None
-        )
+        pyproject_backup: Path | None = None
+        lockfile_backup: Path | None = None
         try:
-            _write_new_file(
-                pyproject_backup,
+            pyproject_backup = _create_unique_backup(
+                pyproject,
+                stamp,
                 pyproject_snapshot.content,
                 pyproject_snapshot.mode,
             )
-            if lockfile_backup is not None:
-                _write_new_file(
-                    lockfile_backup,
+            if lockfile_snapshot.existed:
+                lockfile_backup = _create_unique_backup(
+                    lockfile,
+                    stamp,
                     lockfile_snapshot.content,
                     lockfile_snapshot.mode,
                 )
         except OSError as exc:
-            pyproject_backup.unlink(missing_ok=True)
+            if pyproject_backup is not None:
+                pyproject_backup.unlink(missing_ok=True)
             if lockfile_backup is not None:
                 lockfile_backup.unlink(missing_ok=True)
             raise ProjectUpdateError(f"failed to back up project files: {exc}") from exc
+        if pyproject_backup is None:
+            raise ProjectUpdateError("failed to allocate a pyproject backup")
         return cls(
             pyproject_snapshot=pyproject_snapshot,
             lockfile_snapshot=lockfile_snapshot,
@@ -259,13 +266,21 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
-def _unused_backup_path(path: Path, stamp: str) -> Path:
-    candidate = path.with_name(f"{path.name}.bak.{stamp}")
-    suffix = 1
-    while candidate.exists():
-        candidate = path.with_name(f"{path.name}.bak.{stamp}.{suffix}")
-        suffix += 1
-    return candidate
+def _create_unique_backup(
+    path: Path,
+    stamp: str,
+    content: bytes,
+    mode: int,
+) -> Path:
+    for suffix in range(1000):
+        ending = "" if suffix == 0 else f".{suffix}"
+        candidate = path.with_name(f"{path.name}.bak.{stamp}{ending}")
+        try:
+            _write_new_file(candidate, content, mode)
+        except FileExistsError:
+            continue
+        return candidate
+    raise OSError(f"could not allocate a unique backup for {path}")
 
 
 def _digest(content: bytes) -> str:

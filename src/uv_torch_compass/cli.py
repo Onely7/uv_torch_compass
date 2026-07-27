@@ -138,7 +138,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
             reporter.emit_final(result.outcome, result.workspace, exit_code=0)
             return 0
     except ReportError as exc:
-        print(f"uv-torch-compass: {exc}", file=sys.stderr)
+        if exc.document is not None:
+            print(
+                json.dumps(exc.document, indent=2, sort_keys=True),
+                file=sys.stderr,
+            )
+        else:
+            print(f"uv-torch-compass: {exc}", file=sys.stderr)
         return 1
 
 
@@ -149,6 +155,13 @@ def _add_shared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cuda-device", metavar="INDEX_OR_UUID")
     parser.add_argument("--cuda-compatibility", choices=("strict", "minor"))
     parser.add_argument("--probe-profile", choices=("standard", "compile"))
+    parser.add_argument(
+        "--framework-probe",
+        dest="framework_probes",
+        action="append",
+        choices=("vllm",),
+        metavar="NAME",
+    )
     parser.add_argument("--log-dir", metavar="PATH")
     parser.add_argument("--timeout", type=int, metavar="SECONDS")
     parser.add_argument("--output-format", choices=("text", "json"))
@@ -172,7 +185,7 @@ def _add_selection_options(parser: argparse.ArgumentParser) -> None:
 def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
     if getattr(namespace, "output_format", None) == "json":
         document = {
-            "schema_version": 4,
+            "schema_version": 5,
             "operation": getattr(namespace, "operation", ""),
             "status": "failed",
             "exit_code": 1,
@@ -191,6 +204,14 @@ def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
             "source_anchors": [],
             "required_environment": "",
             "validation": {},
+            "framework_validation": [],
+            "probe_contract": {},
+            "operation_state": {
+                "applied": False,
+                "report_written": False,
+            },
+            "environment_policy": {},
+            "candidate_failure_summary": None,
             "changes": [],
             "backups": [],
             "warnings": [],

@@ -19,16 +19,41 @@ from uv_torch_compass.errors import (
 
 _CONTROL_ENVIRONMENT = {
     "CONDA_PREFIX",
+    "PYTHONHOME",
+    "PYTHONINSPECT",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
     "UV_FROZEN",
     "UV_LOCKED",
+    "UV_NO_SOURCES",
+    "UV_NO_SOURCES_PACKAGE",
     "UV_NO_SYNC",
+    "UV_OVERRIDE",
     "UV_PROJECT",
+    "UV_PROJECT_ENVIRONMENT",
     "UV_PYTHON",
     "UV_PYTHON_PREFERENCE",
     "UV_TORCH_BACKEND",
     "UV_WORKING_DIR",
     "VIRTUAL_ENV",
 }
+_ALLOWED_UV_ENVIRONMENT = {
+    "UV_CACHE_DIR",
+    "UV_DEFAULT_INDEX",
+    "UV_EXTRA_INDEX_URL",
+    "UV_FIND_LINKS",
+    "UV_HTTP_RETRIES",
+    "UV_HTTP_TIMEOUT",
+    "UV_INDEX",
+    "UV_INDEX_URL",
+    "UV_INSECURE_HOST",
+    "UV_KEYRING_PROVIDER",
+    "UV_NATIVE_TLS",
+    "UV_NO_CACHE",
+    "UV_OFFLINE",
+    "UV_SYSTEM_CERTS",
+}
+_MAX_CAPTURE_CHARACTERS = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +138,11 @@ class SubprocessRunner:
             _stop_process_group(process)
             raise
 
-        return CommandResult(process.returncode, stdout, stderr)
+        return CommandResult(
+            process.returncode,
+            _bounded_output(stdout),
+            _bounded_output(stderr),
+        )
 
 
 def resolve_executable(name: str) -> Path:
@@ -141,16 +170,33 @@ def sanitized_environment(
         The child environment and sorted names removed from the parent.
     """
     removed = tuple(
-        sorted(
-            key
-            for key in environ
-            if key in _CONTROL_ENVIRONMENT or key.startswith("UV_TORCH_COMPASS_")
-        )
+        sorted(key for key in environ if _environment_variable_is_controlled(key))
     )
     child = {key: value for key, value in environ.items() if key not in removed}
     if overrides:
         child.update(overrides)
     return child, removed
+
+
+def _environment_variable_is_controlled(key: str) -> bool:
+    if key in _CONTROL_ENVIRONMENT or key.startswith("UV_TORCH_COMPASS_"):
+        return True
+    if not key.startswith("UV_"):
+        return False
+    return key not in _ALLOWED_UV_ENVIRONMENT and not key.startswith("UV_INDEX_")
+
+
+def _bounded_output(value: str) -> str:
+    if len(value) <= _MAX_CAPTURE_CHARACTERS:
+        return value
+    head_size = _MAX_CAPTURE_CHARACTERS // 4
+    tail_size = _MAX_CAPTURE_CHARACTERS - head_size
+    omitted = len(value) - _MAX_CAPTURE_CHARACTERS
+    return (
+        value[:head_size]
+        + f"\n... <{omitted} output characters omitted> ...\n"
+        + value[-tail_size:]
+    )
 
 
 def _stop_process_group(process: subprocess.Popen[str]) -> None:

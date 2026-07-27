@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout には最後の JSON object 一つだけを出します。進捗と警告は stderr へ送るため、stdout の redirect から解析可能な文書を得られます。
 
-schema version は `4` で、次の top-level field を含みます。
+schema version は `5` で、次の top-level field を含みます。
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "operation": "plan",
   "status": "failed",
   "exit_code": 1,
@@ -34,7 +34,8 @@ schema version は `4` で、次の top-level field を含みます。
   "request": {
     "backend": "auto",
     "cuda_compatibility": "strict",
-    "probe_profile": "standard"
+    "probe_profile": "standard",
+    "framework_probes": []
   },
   "python": {},
   "candidate_attempts": [
@@ -63,13 +64,23 @@ schema version は `4` で、次の top-level field を含みます。
     }
   ],
   "resolution_failure": {},
+  "candidate_failure_summary": {},
   "selected_backend": "",
   "selected_index": "",
   "selected_gpu": {},
   "resolved_packages": {},
   "dependency_roots": [],
-  "source_anchors": [],
+  "source_anchors": [
+    {"package": "torch", "scope": "base"}
+  ],
   "required_environment": "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "probe_contract": {},
+  "framework_validation": [],
+  "operation_state": {
+    "applied": false,
+    "report_written": false
+  },
+  "environment_policy": {},
   "validation": {},
   "changes": [],
   "backups": [],
@@ -81,7 +92,9 @@ schema version は `4` で、次の top-level field を含みます。
 
 実際の文書には、対象 package、変更案の diff、実行 log、秘密情報を含まない診断 metadata も入ります。GPU metadata には選択 device、NVIDIA driver version、`nvidia-smi` が示す CUDA 上限を記録します。
 
-各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility` と、省略可能な `failure` を持ちます。方針で除外した候補はinstall前に `skipped` として記録します。`resolution_failure`は、全候補の失敗package、index、重複除去した対応案を集約します。uv出力から確定できないfieldは推測せずJSON `null`にします。CUDA の `validation` には次を含みます。
+各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility` と、省略可能な `failure` を持ちます。方針で除外した候補は install 前に `skipped` として記録します。`candidate_failure_summary` は全候補の失敗 package、index、重複除去した対応案を集約します。`resolution_failure` に同じ集約を入れるのは command 自体が失敗した場合だけで、途中の候補に失敗しても最終結果が成功なら failure として見せません。uv 出力から確定できない field は推測せず JSON `null` にします。
+
+schema 5 では、実行した `probe_contract`、明示的な `framework_validation`、子 process の環境変数方針、scope 付き source anchor、最終操作状態も記録します。CUDA の `validation` には次を含みます。
 
 - 解決した PyTorch CUDA runtime と runtime component version
 - 必要な最低 driver と、`strict`、`minor`、`unsupported` の判定
@@ -112,11 +125,11 @@ uv-torch-compass apply \
   --report-file artifacts/torch-compass.json
 ```
 
-相対パスは対象 project から解決します。同じ directory の一時ファイルを使って書きかけを残さず置換し、mode `0600` を設定します。指定した report を書けない場合は、欠落したまま成功にせず command 自体を失敗させます。
+相対パスは対象 project から解決します。同じ directory の一時ファイルを使って書きかけを残さず置換し、mode `0600` を設定します。report は最終 stdout より先に保存します。project への適用に成功したあと report だけを保存できなかった場合は、project を戻さず終了コード `1` とし、stderr の構造化結果へ `applied: true` と `operation_state.report_written: false` を記録します。
 
 ## 認証情報の扱い
 
-text が log、diff、JSON、report へ入る前に、共通 redactor が URL の user 情報、query 内の token・key・password・secret・signature、authorization header、秘密値らしい変数代入を除去します。子 process の環境変数は値を記録せず、除外した制御変数の名前だけを記録する場合があります。
+text が log、diff、JSON、report へ入る前に、共通 redactor が URL の user 情報、query 内の token・key・password・secret・signature、認証・cookie header、JSON の秘密 field、秘密値を伴う command option、秘密値らしい変数代入を除去します。子 process の環境変数は値を記録せず、除外した制御変数の名前だけを記録する場合があります。
 
 redaction があるからといって、log を無確認で公開してよいわけではありません。ローカルパス、package version、GPU 名、一般的ではない形式の認証情報が機密になる場合があるため、共有前に内容を確認してください。
 

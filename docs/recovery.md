@@ -30,6 +30,8 @@ After locking, `apply` first runs `uv sync --locked --dry-run`. A preflight fail
 
 Before replacing a file, the transaction compares its expected content hash. If an editor or another process made an unrecognized change, uv-torch-compass does not overwrite that content; it reports the conflict and retains the backups.
 
+Transaction targets and report destinations must not be symbolic links. After acquiring the workspace lock, `apply` rechecks both `pyproject.toml` and `uv.lock` before writing, so a change made while waiting for the lock is rejected instead of overwritten.
+
 A failed recovery sync means the files may be restored while `.venv` still needs manual repair. The warning says which part failed.
 
 ## Manual recovery
@@ -74,11 +76,14 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | CUDA runtime component does not match the backend | Recreate the synchronized environment from the lockfile and inspect index configuration; the installed CUDA major/minor must match `cuNNN`. |
 | native architecture is missing in minor mode | The wheel lacks native machine code for the selected GPU. Choose another backend or update the driver and return to strict mode. |
 | compile probe failed | Re-run with `--probe-profile standard` to separate normal CUDA operation from the optional Inductor/Triton path. |
+| vLLM framework probe failed | Check the installed `vllm` metadata, native extension, and reported platform. The probe does not load a model or start workers. |
+| candidate source policy could not be prepared | Inspect path, Git, URL, workspace, constraint, override, and index sources used by the target project. Candidate verification preserves relevant sources instead of silently replacing them with PyPI. |
 | no usable backend | Read each failed candidate's package, requirement, dependency path, and index. Use its suggestions; inspect the private log when the failure kind is `unknown`. |
 | `uv lock` failure | Read uv's resolver explanation, including unselected scopes and other workspace members. |
 | `uv sync preflight failed` and a package has no wheel | Inspect the package and platform in uv's message. The tool records the current Linux architecture in `tool.uv.required-environments`, allowing uv to choose a compatible version when one exists. |
 | environment is not synchronized | Run the intended `apply`, or inspect `uv sync --locked --check` output. |
 | final runtime validation failure | The synchronized project did not reproduce the temporary candidate result; rollback should have started. |
+| report could not be written after apply | The project update remains applied because report persistence occurs after the transaction. The command exits with `1`; use the private log and retry with a safe regular-file report path. |
 | changed while plan/check was running | Retry after the editor or other dependency process has finished. |
 | another process is updating the workspace | Wait for the other `apply` to finish; do not delete an active lock to force concurrency. |
 

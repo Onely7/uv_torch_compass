@@ -1,7 +1,6 @@
 from pathlib import Path
 
 from uv_torch_compass.command_runner import CommandResult
-from uv_torch_compass.domain import BackendCandidate, Channel
 from uv_torch_compass.uv_commands import UvCommandClient
 
 
@@ -51,27 +50,29 @@ def test_client_discovers_backend_values_and_sanitizes_environment() -> None:
     assert timeout == 30
 
 
-def test_client_builds_stable_and_nightly_candidate_commands(tmp_path: Path) -> None:
+def test_client_builds_isolated_candidate_sync_command(tmp_path: Path) -> None:
     runner = RecordingRunner()
     client = _client(runner)
     venv = tmp_path / "venv"
+    project = tmp_path / "candidate"
+    python = Path("/usr/bin/python3")
 
-    client.install_candidate(
-        venv, ("torch>=2.6",), BackendCandidate("cu128"), dry_run=True
-    )
-    stable = runner.calls[-1][0]
-    client.install_candidate(
-        venv,
-        ("torch>=2.6",),
-        BackendCandidate("cu128", Channel.NIGHTLY),
-    )
-    nightly = runner.calls[-1][0]
+    client.sync_candidate(venv, project, python)
 
-    assert stable[-3:] == ["--torch-backend", "cu128", "--dry-run"]
-    assert "--torch-backend" in stable
-    assert "--index" in nightly
-    assert "https://download.pytorch.org/whl/nightly/cu128" in nightly
-    assert nightly[-2:] == ["--prerelease", "allow"]
+    arguments, cwd, environment, timeout = runner.calls[-1]
+    assert arguments == [
+        "/usr/bin/uv",
+        "sync",
+        "--project",
+        str(project),
+        "--python",
+        str(python),
+        "--no-install-project",
+        "--no-dev",
+    ]
+    assert cwd == project
+    assert environment["UV_PROJECT_ENVIRONMENT"] == str(venv)
+    assert timeout == 1800
 
 
 def test_client_builds_workspace_and_project_commands(tmp_path: Path) -> None:
@@ -82,7 +83,6 @@ def test_client_builds_workspace_and_project_commands(tmp_path: Path) -> None:
     client.version()
     client.python_find("3.12", project_dir=tmp_path)
     client.python_install("3.12", project_dir=tmp_path)
-    client.create_venv(tmp_path / "venv", python, cwd=tmp_path)
     client.install_numpy_lt2(tmp_path / "venv")
     client.workspace_metadata(tmp_path)
     client.lock(tmp_path, python)

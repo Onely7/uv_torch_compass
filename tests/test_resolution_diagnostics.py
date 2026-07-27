@@ -59,6 +59,27 @@ def test_reports_dependency_conflict() -> None:
     assert failure.package.name == "numpy"
 
 
+def test_reports_multihop_dependency_path_and_registry_absence() -> None:
+    failure = interpret_uv_failure(
+        "Because vllm==0.19.1 depends on engine==1 and engine==1 depends on "
+        "torch==2.10.0 and torch==2.10.0 was not found in the package registry, "
+        "the requirements are unsatisfiable.",
+        candidate=BackendCandidate("cu126"),
+        dependency_roots=("vllm==0.19.1",),
+    )
+
+    assert failure.kind is ResolutionFailureKind.NO_COMPATIBLE_DISTRIBUTION
+    assert failure.package is not None
+    assert failure.package.requirement == "torch==2.10.0"
+    assert failure.required_by == (
+        "vllm==0.19.1",
+        "engine==1",
+        "torch==2.10.0",
+    )
+    assert failure.index is not None
+    assert failure.index.name == "pytorch-cu126"
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [

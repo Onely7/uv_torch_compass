@@ -30,6 +30,8 @@ lock 後、`apply` は最初に `uv sync --locked --dry-run` を実行します�
 
 置換前には期待している content hash と比較します。editor や別 process による未知の変更があれば、その内容を上書きせず、競合を報告して backup を残します。
 
+transaction の対象と report の保存先に symbolic link は指定できません。`apply` は workspace lock の取得後に `pyproject.toml` と `uv.lock` の両方を再確認するため、lock 待機中の変更も上書きせず拒否します。
+
 復旧 sync が失敗した場合、ファイルは復元済みでも `.venv` を手動で直す必要があります。どの復旧が失敗したかを警告で確認できます。
 
 ## 手動で復旧する
@@ -74,12 +76,14 @@ log には phase、マスク済み subprocess 出力、package version、ロー�
 | CUDA runtime component が backend と一致しない | lockfile から同期環境を作り直し、index 設定を確認する。インストール済み CUDA major・minor は `cuNNN` と一致する必要がある |
 | minor で native architecture がない | 選択 GPU 用の native machine code が wheel にない。別 backend を選ぶか、driver 更新後に strict へ戻す |
 | compile probe の失敗 | `--probe-profile standard` で再実行し、通常の CUDA 動作と任意の Inductor／Triton 経路を切り分ける |
-| 利用できる backend がない | 候補の理由、version 条件、network/index、disk 容量、GPU runtime error を確認する |
+| vLLM framework probe の失敗 | install 済み `vllm` の metadata、native extension、報告された platform を確認する。この probe は model の読込みや worker の起動を行わない |
+| 候補の source 方針を準備できない | 対象 project が使う path、Git、URL、workspace、constraint、override、index source を確認する。候補検証では関連 source を PyPI に暗黙置換せず保持する |
 | `uv lock` の失敗 | 選択していない scope や別 workspace member を含む uv の resolver 説明を読む |
 | 利用可能な backend がない | 候補ごとのpackage、requirement、依存経路、indexと対応案を確認する。failure kindが`unknown`の場合はprivate logを確認する |
 | `uv sync preflight failed` と利用可能な wheel がない旨の表示 | uv が示す package と platform を確認する。現在の Linux architecture は `tool.uv.required-environments` に記録されるため、互換 version があれば uv が lock 時に選択できる |
 | 環境が同期されていない | 意図した `apply` を実行するか、`uv sync --locked --check` の出力を調べる |
 | 最終 runtime 検証の失敗 | 同期後 project で一時候補の結果を再現できていない。rollback の結果を確認する |
+| apply 後に report を書き込めない | report 保存は transaction 完了後に行うため、project 更新は適用済みのままになる。終了 code は `1`。private log を確認し、安全な通常ファイルの保存先へ変更して再実行する |
 | plan/check 中にファイルが変わった | editor や別の依存更新 process が終わってから再実行する |
 | 別 process が workspace を更新中 | ほかの `apply` が終わるまで待つ。強制的な同時実行のため active lock を消さない |
 

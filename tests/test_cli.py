@@ -15,6 +15,7 @@ from uv_torch_compass.domain import (
     CommandOutcome,
     FailedIndex,
     FailedPackage,
+    FrameworkProbe,
     Operation,
     OutputFormat,
     ProbeProfile,
@@ -83,6 +84,8 @@ def test_cli_overrides_namespaced_environment_and_project_settings(
             "minor",
             "--probe-profile",
             "compile",
+            "--framework-probe",
+            "vllm",
             "--torch",
             ">=2.7",
         ]
@@ -103,6 +106,7 @@ def test_cli_overrides_namespaced_environment_and_project_settings(
     assert options.extras == ("cli",)
     assert options.cuda_compatibility is CompatibilityPolicy.MINOR
     assert options.probe_profile is ProbeProfile.COMPILE
+    assert options.framework_probes == (FrameworkProbe.VLLM,)
     assert options.requirement_overrides == ("torch>=2.7",)
 
 
@@ -116,6 +120,7 @@ def test_environment_lists_are_trimmed_and_deduplicated(tmp_path: Path) -> None:
             "UV_TORCH_COMPASS_OUTPUT_FORMAT": "json",
             "UV_TORCH_COMPASS_CUDA_COMPATIBILITY": "minor",
             "UV_TORCH_COMPASS_PROBE_PROFILE": "compile",
+            "UV_TORCH_COMPASS_FRAMEWORK_PROBES": "vllm,vllm",
         },
         cwd=tmp_path,
     )
@@ -125,6 +130,7 @@ def test_environment_lists_are_trimmed_and_deduplicated(tmp_path: Path) -> None:
     assert options.output_format is OutputFormat.JSON
     assert options.cuda_compatibility is CompatibilityPolicy.MINOR
     assert options.probe_profile is ProbeProfile.COMPILE
+    assert options.framework_probes == (FrameworkProbe.VLLM,)
 
 
 def test_new_cuda_settings_default_to_strict_standard(tmp_path: Path) -> None:
@@ -136,6 +142,7 @@ def test_new_cuda_settings_default_to_strict_standard(tmp_path: Path) -> None:
 
     assert options.cuda_compatibility is CompatibilityPolicy.STRICT
     assert options.probe_profile is ProbeProfile.STANDARD
+    assert options.framework_probes == ()
 
 
 def test_unknown_project_setting_is_rejected(tmp_path: Path) -> None:
@@ -180,7 +187,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
         == 1
     )
     document = json.loads(capsys.readouterr().out)
-    assert document["schema_version"] == 4
+    assert document["schema_version"] == 5
     assert document["status"] == "failed"
     assert document["exit_code"] == 1
     assert document["errors"]
@@ -319,7 +326,7 @@ def test_generic_command_failure_has_no_candidate_attempts(
 
     document = json.loads(capsys.readouterr().out)
     assert status == 1
-    assert document["schema_version"] == 4
+    assert document["schema_version"] == 5
     assert document["candidate_attempts"] == []
 
 

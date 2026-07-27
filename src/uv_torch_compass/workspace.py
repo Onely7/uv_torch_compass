@@ -26,6 +26,7 @@ class WorkspaceContext:
     package: str | None
     lockfile: Path
     is_workspace: bool
+    members: tuple[tuple[str, Path], ...] = ()
 
 
 def resolve_workspace(pyproject: Path, uv: UvCommandClient) -> WorkspaceContext:
@@ -49,10 +50,12 @@ def resolve_workspace(pyproject: Path, uv: UvCommandClient) -> WorkspaceContext:
             package=package,
             lockfile=project_dir / "uv.lock",
             is_workspace=False,
+            members=(),
         )
 
     metadata = _parse_metadata(result.stdout)
     workspace_root = _metadata_path(metadata, "workspace_root")
+    members: tuple[tuple[Path, str], ...] = ()
     is_workspace = workspace_root != project_dir or _declares_workspace(
         workspace_root / "pyproject.toml"
     )
@@ -84,6 +87,7 @@ def resolve_workspace(pyproject: Path, uv: UvCommandClient) -> WorkspaceContext:
         package=package if is_workspace and project_dir != workspace_root else None,
         lockfile=workspace_root / "uv.lock",
         is_workspace=is_workspace,
+        members=tuple((name, path) for path, name in members),
     )
 
 

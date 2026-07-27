@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.backend_selection import build_candidate_plan
-from uv_torch_compass.candidate_probe import CandidateProbeService, ProbeOutcome
+from uv_torch_compass.candidate_probe import CandidateProbeService
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
     CompatibilityLevel,
+    compatibility_catalog_metadata,
     validate_runtime_identity,
 )
 from uv_torch_compass.domain import (
@@ -29,57 +30,32 @@ from uv_torch_compass.domain import (
 from uv_torch_compass.errors import (
     CommandError,
     ConfigurationError,
-    ExternalModificationError,
+    ProbeError,
     ProjectUpdateError,
+)
+from uv_torch_compass.framework_validation import (
+    FrameworkValidation,
+    framework_validation_document,
+    parse_framework_probe,
 )
 from uv_torch_compass.nvidia import NvidiaInspector, NvidiaSnapshot
 from uv_torch_compass.platform_requirement import RequiredEnvironment
+from uv_torch_compass.probe_contract import ProbeOutcome
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
     render_project_configuration,
 )
 from uv_torch_compass.python_selection import PythonSelector, ResolvedPython
+from uv_torch_compass.report_destination import preflight_report_destination
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.safe_transaction import (
-    FileSnapshot,
     SafeProjectTransaction,
     WorkspaceAdvisoryLock,
 )
+from uv_torch_compass.target_state import ApplicationResult, TargetState
 from uv_torch_compass.uv_commands import UvCommandClient
 from uv_torch_compass.workspace import WorkspaceContext, resolve_workspace
-
-
-@dataclass(frozen=True, slots=True)
-class ApplicationResult:
-    """Return a command outcome together with its resolved workspace."""
-
-    outcome: CommandOutcome
-    workspace: WorkspaceContext
-
-
-@dataclass(frozen=True, slots=True)
-class _TargetState:
-    pyproject: FileSnapshot
-    lockfile: FileSnapshot
-
-    @classmethod
-    def capture(cls, workspace: WorkspaceContext) -> _TargetState:
-        return cls(
-            FileSnapshot.capture(workspace.project_dir / "pyproject.toml"),
-            FileSnapshot.capture(workspace.lockfile),
-        )
-
-    def require_unchanged(self, operation: Operation) -> None:
-        for expected in (self.pyproject, self.lockfile):
-            current = FileSnapshot.capture(expected.path)
-            if (current.existed, current.digest) != (
-                expected.existed,
-                expected.digest,
-            ):
-                raise ExternalModificationError(
-                    f"{expected.path} changed while {operation.value} was running"
-                )
 
 
 @dataclass(slots=True)
@@ -100,7 +76,12 @@ class CompassApplication:
         self._preflight()
         self.reporter.phase("inspect", "reading the target project and workspace")
         workspace = resolve_workspace(self.options.pyproject, self.uv)
-        initial_state = _TargetState.capture(workspace)
+        preflight_report_destination(
+            self.options,
+            workspace,
+            log_path=self.reporter.log_path,
+        )
+        initial_state = TargetState.capture(workspace)
         requirements = read_project_requirements(
             self.options.pyproject,
             extras=self.options.extras,
@@ -143,7 +124,10 @@ class CompassApplication:
             raise CommandError("apply, plan, and check currently support Linux only")
         version = self.uv.version()
         _require_success(version, "failed to run uv --version")
-        if not self.uv.available_torch_backends():
+        if (
+            self.options.operation is not Operation.CHECK
+            and not self.uv.available_torch_backends()
+        ):
             raise CommandError(
                 "this uv version does not support PyTorch backend selection; update uv"
             )
@@ -154,7 +138,7 @@ class CompassApplication:
         workspace: WorkspaceContext,
         requirements: ProjectRequirements,
         python: ResolvedPython,
-        initial_state: _TargetState,
+        initial_state: TargetState,
     ) -> CommandOutcome:
         self.reporter.phase("resolve", "building backend candidates")
         nvidia, gpu_warnings = self._inspect_gpu(
@@ -189,6 +173,9 @@ class CompassApplication:
                 nvidia=nvidia,
                 compatibility_policy=self.options.cuda_compatibility,
                 probe_profile=self.options.probe_profile,
+                target_pyproject=self.options.pyproject,
+                workspace_members=workspace.members,
+                framework_probes=self.options.framework_probes,
             )
             verified = probe.find_working_candidate(
                 candidate_plan.candidates,
@@ -208,7 +195,7 @@ class CompassApplication:
             overrides=self.options.requirement_overrides,
             backend=verified.runtime.backend,
             numpy_lt2_required=verified.numpy_lt2_required,
-            source_packages=verified.installed_pytorch,
+            managed_anchors=verified.source_anchors,
             required_environment=RequiredEnvironment.current_linux().marker,
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
@@ -217,14 +204,25 @@ class CompassApplication:
             {"scope": item.scope.label, "requirement": str(item.requirement)}
             for item in requirements.selected
         ]
-        metadata["source_anchors"] = sorted(
-            verified.installed_pytorch.difference(
-                item.package
-                for item in requirements.selected
-                if item.package in {"torch", "torchvision", "torchaudio"}
-            )
-        )
+        metadata["source_anchors"] = [
+            {"package": anchor.package, "scope": anchor.scope.label}
+            for anchor in verified.source_anchors
+        ]
         metadata["required_environment"] = RequiredEnvironment.current_linux().marker
+        metadata["probe_contract"] = {
+            "profile": self.options.probe_profile.value,
+            "frameworks": [
+                framework.value for framework in self.options.framework_probes
+            ],
+            "installed_pytorch": sorted(verified.installed_pytorch),
+        }
+        metadata["framework_validation"] = framework_validation_document(
+            verified.framework_validation
+        )
+        metadata["environment_policy"] = {
+            "removed_control_variables": list(self.uv.removed_environment_names),
+            "project_sources_preserved": True,
+        }
         warnings = (*gpu_warnings, *candidate_plan.warnings)
         if self.options.operation is Operation.PLAN:
             initial_state.require_unchanged(self.options.operation)
@@ -251,6 +249,7 @@ class CompassApplication:
             warnings,
             metadata,
             nvidia,
+            initial_state,
         )
 
     def _apply(
@@ -266,16 +265,17 @@ class CompassApplication:
         warnings: tuple[str, ...],
         metadata: dict[str, object],
         nvidia: NvidiaSnapshot | None,
+        initial_state: TargetState,
     ) -> CommandOutcome:
         self.reporter.phase("apply", "updating and synchronizing the target project")
         lock_path = workspace.workspace_root / ".uv-torch-compass.lock"
         transaction: SafeProjectTransaction | None = None
         environment_mutation_started = False
         with WorkspaceAdvisoryLock(lock_path):
-            if self.options.pyproject.read_text(encoding="utf-8") != original:
-                raise ExternalModificationError(
-                    f"{self.options.pyproject} changed before the transaction started"
-                )
+            # Candidate verification can take minutes. Recheck both project
+            # files after acquiring the lock so an editor or uv process cannot
+            # race the earlier read-only snapshot.
+            initial_state.require_unchanged(self.options.operation)
             try:
                 transaction = SafeProjectTransaction.create(
                     self.options.pyproject, workspace.lockfile
@@ -318,6 +318,15 @@ class CompassApplication:
                     gpu_selector,
                     verified.compatibility,
                 )
+                final_frameworks = self._run_project_framework_probes(
+                    workspace,
+                    python,
+                    final.backend,
+                    gpu_selector,
+                )
+                metadata["framework_validation"] = framework_validation_document(
+                    final_frameworks
+                )
                 final_compatibility = self._compatibility_for(final, nvidia)
             except BaseException as exc:
                 if transaction is not None:
@@ -332,6 +341,10 @@ class CompassApplication:
         status = (
             "success_with_warnings" if self.reporter.warning_messages else "success"
         )
+        metadata["operation_state"] = {
+            "applied": True,
+            "report_written": False,
+        }
         return CommandOutcome(
             status=status,
             applied=True,
@@ -349,7 +362,7 @@ class CompassApplication:
         workspace: WorkspaceContext,
         requirements: ProjectRequirements,
         python: ResolvedPython,
-        initial_state: _TargetState,
+        initial_state: TargetState,
     ) -> CommandOutcome:
         self.reporter.phase(
             "verify", "checking current metadata, lock, and environment"
@@ -392,14 +405,38 @@ class CompassApplication:
             gpu_selector,
             compatibility,
         )
+        framework_validations = self._run_project_framework_probes(
+            workspace,
+            python,
+            runtime.backend,
+            gpu_selector,
+        )
         initial_state.require_unchanged(self.options.operation)
+        metadata = _metadata(python, nvidia)
+        metadata["framework_validation"] = framework_validation_document(
+            framework_validations
+        )
+        metadata["probe_contract"] = {
+            "profile": self.options.probe_profile.value,
+            "frameworks": [
+                framework.value for framework in self.options.framework_probes
+            ],
+        }
+        metadata["environment_policy"] = {
+            "removed_control_variables": list(self.uv.removed_environment_names),
+            "project_sources_preserved": True,
+        }
+        metadata["operation_state"] = {
+            "applied": False,
+            "report_written": False,
+        }
         return CommandOutcome(
             status="valid",
             applied=False,
             runtime=runtime,
             compatibility=compatibility,
             warnings=gpu_warnings,
-            metadata=_metadata(python, nvidia),
+            metadata=metadata,
         )
 
     def _inspect_gpu(
@@ -481,6 +518,15 @@ class CompassApplication:
             require_native_architecture=(
                 compatibility.level is CompatibilityLevel.MINOR
             ),
+            expected_packages=frozenset(
+                package
+                for package, version in (
+                    ("torch", report.torch_version),
+                    ("torchvision", report.torchvision_version),
+                    ("torchaudio", report.torchaudio_version),
+                )
+                if version != "not-installed"
+            ),
         )
         return report
 
@@ -488,6 +534,42 @@ class CompassApplication:
         self, runtime: RuntimeReport, nvidia: NvidiaSnapshot | None
     ) -> CompatibilityDecision:
         return self._compatibility_for_candidate(runtime.backend, nvidia)
+
+    def _run_project_framework_probes(
+        self,
+        workspace: WorkspaceContext,
+        python: ResolvedPython,
+        backend,
+        gpu_selector: str | None,
+    ) -> tuple[FrameworkValidation, ...]:
+        if not self.options.framework_probes:
+            return ()
+        arguments: list[str | Path] = [
+            Path(__file__).with_name("framework_probe.py").resolve(),
+            "--expected-backend",
+            backend.value,
+        ]
+        for framework in self.options.framework_probes:
+            arguments.extend(["--framework", framework.value])
+        result = self.uv.run_project_python(
+            workspace.project_dir,
+            python.executable,
+            arguments,
+            package=workspace.package,
+            extras=self.options.extras,
+            groups=self.options.groups,
+            cuda_device=gpu_selector,
+        )
+        self.reporter.detail(result.stdout + result.stderr)
+        try:
+            validations = parse_framework_probe(
+                result.stdout,
+                self.options.framework_probes,
+            )
+        except ProbeError as exc:
+            raise CommandError(str(exc)) from exc
+        _require_success(result, "final framework validation failed", self.reporter)
+        return validations
 
     def _compatibility_for_candidate(
         self, backend, nvidia: NvidiaSnapshot | None
@@ -600,7 +682,8 @@ def _metadata(
             "implementation_name": python.implementation_name,
             "implementation": python.platform_implementation,
             "executable": str(python.executable),
-        }
+        },
+        "cuda_compatibility_catalog": compatibility_catalog_metadata(),
     }
     if nvidia is not None:
         metadata["gpu"] = {
@@ -609,6 +692,7 @@ def _metadata(
             "name": nvidia.selected.name,
             "driver": nvidia.selected.driver_version,
             "cuda_max": nvidia.driver_cuda_max,
+            "memory_free_mib": nvidia.selected.memory_free_mib,
         }
     return metadata
 

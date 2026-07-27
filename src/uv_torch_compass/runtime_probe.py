@@ -91,10 +91,14 @@ def _validate_runtime(
         require_native_architecture=require_native_architecture,
     )
     torchvision_version, torchvision_test = _validate_torchvision(
-        torch, validate=validate_torchvision, device=device
+        torch,
+        validate=validate_torchvision or _is_distribution_installed("torchvision"),
+        device=device,
     )
     torchaudio_version, torchaudio_test = _validate_torchaudio(
-        torch, validate=validate_torchaudio, device=device
+        torch,
+        validate=validate_torchaudio or _is_distribution_installed("torchaudio"),
+        device=device,
     )
     compile_test = _validate_compile(torch, profile=probe_profile, device=device)
 
@@ -120,6 +124,14 @@ def _validate_runtime(
         "compile_test": compile_test,
         "probe_profile": probe_profile,
     }
+
+
+def _is_distribution_installed(package: str) -> bool:
+    try:
+        importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
 
 
 def _validate_cpu_and_numpy(torch: Any, np: Any) -> None:

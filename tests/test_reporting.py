@@ -1,6 +1,8 @@
 import json
 import stat
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -22,6 +24,7 @@ from uv_torch_compass.domain import (
     RuntimeReport,
 )
 from uv_torch_compass.errors import ProjectUpdateError, ReportError
+from uv_torch_compass.report_destination import preflight_report_destination
 from uv_torch_compass.reporting import CommandReporter, redact
 from uv_torch_compass.workspace import WorkspaceContext
 
@@ -31,12 +34,17 @@ def test_redaction_removes_url_and_header_credentials() -> None:
         "https://user:password@example.invalid/simple?token=secret\n"
         "Authorization: Bearer abc123\n"
         "UV_INDEX_TOKEN=top-secret\n"
+        'Cookie: session=cookie-secret\n{"access_token": "json-secret"}\n'
+        "--api-key option-secret\n"
     )
     redacted = redact(value)
     assert "password" not in redacted
     assert "secret" not in redacted
     assert "abc123" not in redacted
     assert "top-secret" not in redacted
+    assert "cookie-secret" not in redacted
+    assert "json-secret" not in redacted
+    assert "option-secret" not in redacted
     assert "<redacted>" in redacted
 
 
@@ -191,6 +199,35 @@ def test_text_report_explains_failed_candidate(tmp_path: Path, capsys) -> None:
     assert "Suggestion: Select a compatible vLLM version." in captured.out
 
 
+def test_text_report_limits_long_skipped_candidate_lists(
+    tmp_path: Path, capsys
+) -> None:
+    reporter = CommandReporter(_text_options(tmp_path), "0.1.0")
+    attempts = tuple(
+        CandidateAttempt(
+            f"cu{index}",
+            "policy",
+            "skipped",
+            f"candidate {index} is unsupported",
+            "unsupported",
+        )
+        for index in range(7)
+    )
+
+    with reporter:
+        reporter.emit_final(
+            CommandOutcome("failed", False, None, attempts=attempts),
+            None,
+            exit_code=1,
+            error="no usable backend",
+        )
+
+    captured = capsys.readouterr()
+    assert "cu4: candidate 4 is unsupported" in captured.out
+    assert "cu5: candidate 5 is unsupported" not in captured.out
+    assert "... and 2 more" in captured.out
+
+
 def test_reporter_requires_context_and_wraps_atomic_write_failure(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -203,9 +240,41 @@ def test_reporter_requires_context_and_wraps_atomic_write_failure(
         raise ProjectUpdateError("disk failure")
 
     monkeypatch.setattr("uv_torch_compass.reporting.atomic_write_private", fail_write)
-    with reporter, pytest.raises(ReportError, match="could not write report"):
+    with (
+        reporter,
+        pytest.raises(ReportError, match="could not write report") as captured,
+    ):
         reporter.emit_final(
-            CommandOutcome("failed", False, None),
+            CommandOutcome("success", True, None),
             None,
-            exit_code=1,
+            exit_code=0,
+        )
+
+    assert captured.value.applied is True
+    assert captured.value.document is not None
+    assert captured.value.document["applied"] is True
+    assert captured.value.document["exit_code"] == 1
+    operation_state = captured.value.document["operation_state"]
+    assert isinstance(operation_state, dict)
+    assert cast(dict[str, object], operation_state)["report_written"] is False
+
+
+def test_report_destination_rejects_the_target_pyproject(
+    tmp_path: Path,
+) -> None:
+    options = _text_options(tmp_path)
+    options = replace(options, report_file=options.pyproject)
+    workspace = WorkspaceContext(
+        tmp_path,
+        tmp_path,
+        None,
+        tmp_path / "uv.lock",
+        False,
+    )
+
+    with pytest.raises(ReportError, match="protected"):
+        preflight_report_destination(
+            options,
+            workspace,
+            log_path=tmp_path / "logs/run.log",
         )

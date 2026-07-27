@@ -55,6 +55,12 @@ _PLATFORM = re.compile(
     r"`(?P<platform>[^`\n]+)`",
     re.IGNORECASE,
 )
+_REGISTRY_MISSING = re.compile(
+    r"(?P<requirement>[A-Za-z0-9_.-]+"
+    r"(?:(?:===|==|~=|!=|<=|>=|<|>)[^,\s]+)?)"
+    r"\s+was not found in the package registry",
+    re.IGNORECASE,
+)
 
 
 def interpret_uv_failure(
@@ -75,8 +81,9 @@ def interpret_uv_failure(
     """
     clean = _normalize_output(output)
     lowered = clean.lower()
-    dependency = _dependency_context(clean, dependency_roots)
-    package = dependency[0] or _package_from_failure(clean)
+    explicit_package = _package_from_failure(clean)
+    dependency = _dependency_context(clean, dependency_roots, explicit_package)
+    package = explicit_package or dependency[0]
     required_by = dependency[1]
     platform = _match_group(_PLATFORM, clean, "platform")
     index = _index_for(package, clean, candidate)
@@ -137,8 +144,10 @@ def interpret_uv_failure(
             platform,
             ("Select a package version that publishes a wheel for this platform.",),
         )
-    if _NO_VERSION.search(clean) or (
-        package is not None and "not at the requested version" in lowered
+    if (
+        _NO_VERSION.search(clean)
+        or _REGISTRY_MISSING.search(clean)
+        or (package is not None and "not at the requested version" in lowered)
     ):
         suggestions = _distribution_suggestions(package, candidate)
         return _failure(
@@ -207,28 +216,69 @@ def _normalize_output(output: str) -> str:
 
 
 def _dependency_context(
-    output: str, roots: Sequence[str]
+    output: str,
+    roots: Sequence[str],
+    target: FailedPackage | None,
 ) -> tuple[FailedPackage | None, tuple[str, ...]]:
-    match = _DEPENDENCY.search(output)
-    if match is None:
+    matches = list(_DEPENDENCY.finditer(output))
+    if not matches:
         return None, ()
-    requirement = _parse_requirement(match.group("requirement"))
-    if requirement is None:
+    edges: list[tuple[str, str, Requirement]] = []
+    for match in matches:
+        requirement = _parse_requirement(match.group("requirement"))
+        if requirement is None:
+            continue
+        dependent = str(canonicalize_name(match.group("dependent")))
+        dependent_text = match.group("dependent") + (
+            match.group("dependent_spec") or ""
+        )
+        edges.append((dependent, dependent_text, requirement))
+    if not edges:
         return None, ()
-    dependent = canonicalize_name(match.group("dependent"))
-    root = next(
-        (value for value in roots if _requirement_name(value) == dependent),
-        None,
+
+    target_name = target.name if target is not None else None
+    root_by_name = {
+        name: value for value in roots if (name := _requirement_name(value)) is not None
+    }
+    for root_name, root_text in root_by_name.items():
+        path = _dependency_path(edges, root_name, target_name)
+        if path:
+            return _failed_package(path[-1]), (root_text, *(str(item) for item in path))
+
+    dependent, dependent_text, requirement = edges[0]
+    del dependent
+    return _failed_package(requirement), (
+        root_by_name.get(_requirement_name(dependent_text), dependent_text),
+        str(requirement),
     )
-    dependent_text = root or (
-        match.group("dependent") + (match.group("dependent_spec") or "")
-    )
-    package = _failed_package(requirement)
-    return package, (dependent_text, str(requirement))
+
+
+def _dependency_path(
+    edges: Sequence[tuple[str, str, Requirement]],
+    root: str,
+    target: str | None,
+) -> tuple[Requirement, ...]:
+    adjacency: dict[str, list[Requirement]] = {}
+    for dependent, _text, requirement in edges:
+        adjacency.setdefault(dependent, []).append(requirement)
+    pending: list[tuple[str, tuple[Requirement, ...]]] = [(root, ())]
+    visited: set[str] = set()
+    while pending:
+        package, path = pending.pop(0)
+        if package in visited:
+            continue
+        visited.add(package)
+        for requirement in adjacency.get(package, []):
+            child = str(canonicalize_name(requirement.name))
+            child_path = (*path, requirement)
+            if target is None or child == target:
+                return child_path
+            pending.append((child, child_path))
+    return ()
 
 
 def _package_from_failure(output: str) -> FailedPackage | None:
-    for pattern in (_DISTRIBUTION, _BUILD_PACKAGE, _NO_VERSION):
+    for pattern in (_DISTRIBUTION, _BUILD_PACKAGE, _NO_VERSION, _REGISTRY_MISSING):
         match = pattern.search(output)
         if match is None:
             continue

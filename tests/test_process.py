@@ -5,6 +5,7 @@ import pytest
 
 from uv_torch_compass.command_runner import (
     SubprocessRunner,
+    _bounded_output,
     sanitized_environment,
 )
 from uv_torch_compass.errors import (
@@ -60,6 +61,15 @@ def test_environment_filter_removes_control_values_but_keeps_connectivity() -> N
     assert environment["UV_LINK_MODE"] == "copy"
 
 
+def test_project_environment_is_removed_during_environment_sanitization() -> None:
+    environment, removed = sanitized_environment(
+        {"PATH": "/bin", "UV_PROJECT_ENVIRONMENT": "/project-environment"}
+    )
+
+    assert "UV_PROJECT_ENVIRONMENT" not in environment
+    assert "UV_PROJECT_ENVIRONMENT" in removed
+
+
 def test_runner_stops_process_group_after_termination_request(monkeypatch) -> None:
     stopped: list[object] = []
 
@@ -81,3 +91,14 @@ def test_runner_stops_process_group_after_termination_request(monkeypatch) -> No
         SubprocessRunner().run([Path("/bin/tool")], timeout_seconds=5)
 
     assert stopped == [process]
+
+
+def test_captured_output_keeps_bounded_head_and_tail() -> None:
+    value = "start-" + "x" * (3 * 1024 * 1024) + "-end"
+
+    bounded = _bounded_output(value)
+
+    assert bounded.startswith("start-")
+    assert bounded.endswith("-end")
+    assert "output characters omitted" in bounded
+    assert len(bounded) < len(value)

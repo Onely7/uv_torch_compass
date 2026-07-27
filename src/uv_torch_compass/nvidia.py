@@ -34,6 +34,7 @@ class NvidiaDevice:
     uuid: str
     name: str
     driver_version: str
+    memory_free_mib: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +81,7 @@ class NvidiaInspector:
         query = self.runner.run(
             [
                 self.executable,
-                "--query-gpu=index,uuid,name,driver_version",
+                "--query-gpu=index,uuid,name,driver_version,memory.free",
                 "--format=csv,noheader,nounits",
             ],
             timeout_seconds=self.timeout_seconds,
@@ -93,7 +94,7 @@ class NvidiaInspector:
         if not devices:
             raise CommandError("nvidia-smi reported no visible NVIDIA devices")
 
-        selected = devices[0]
+        selected = max(devices, key=lambda device: device.memory_free_mib)
         if requested_device is not None:
             matches = [
                 device
@@ -124,8 +125,22 @@ def _parse_devices(output: str) -> tuple[NvidiaDevice, ...]:
     for line in output.splitlines():
         if not line.strip():
             continue
-        values = [value.strip() for value in line.split(",", 3)]
-        if len(values) != 4 or not all(values):
+        values = [value.strip() for value in line.split(",", 4)]
+        if len(values) != 5 or not all(values):
             raise CommandError(f"nvidia-smi returned an invalid device row: {line!r}")
-        devices.append(NvidiaDevice(*values))
+        try:
+            memory_free_mib = int(values[4])
+        except ValueError as exc:
+            raise CommandError(
+                f"nvidia-smi returned invalid free memory: {values[4]!r}"
+            ) from exc
+        devices.append(
+            NvidiaDevice(
+                index=values[0],
+                uuid=values[1],
+                name=values[2],
+                driver_version=values[3],
+                memory_free_mib=memory_free_mib,
+            )
+        )
     return tuple(devices)

@@ -4,13 +4,14 @@ from textwrap import dedent
 import pytest
 import tomlkit
 
-from uv_torch_compass.domain import BackendCandidate, Channel
+from uv_torch_compass.domain import BackendCandidate, Channel, Scope
 from uv_torch_compass.errors import ConfigurationError, ProjectUpdateError
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
     render_project_configuration,
 )
+from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
 
 def _write(path: Path, content: str) -> None:
@@ -87,7 +88,7 @@ def test_transitive_only_pytorch_project_adds_managed_source_anchor(
         overrides=(),
         backend=BackendCandidate("cu129"),
         numpy_lt2_required=False,
-        source_packages=frozenset({"torch"}),
+        managed_anchors=(ManagedSourceAnchor("torch", Scope("base")),),
         required_environment=(
             "sys_platform == 'linux' and platform_machine == 'x86_64'"
         ),
@@ -100,9 +101,9 @@ def test_transitive_only_pytorch_project_adds_managed_source_anchor(
         "sys_platform == 'linux' and platform_machine == 'x86_64'"
     ]
     assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
-        "torch"
+        {"package": "torch", "scope": "base"}
     ]
-    assert "added managed PyTorch source anchors: torch" in changes
+    assert "added managed PyTorch source anchors: torch in base" in changes
 
 
 def test_managed_source_anchors_are_idempotent_and_replaceable(
@@ -131,13 +132,52 @@ def test_managed_source_anchors_are_idempotent_and_replaceable(
         overrides=(),
         backend=BackendCandidate("cpu"),
         numpy_lt2_required=False,
-        source_packages=frozenset({"torchvision"}),
+        managed_anchors=(ManagedSourceAnchor("torchvision", Scope("base")),),
     )
 
     document = tomlkit.parse(content).unwrap()
     assert document["project"]["dependencies"] == ["vllm", "torchvision"]
     assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
-        "torchvision"
+        {"package": "torchvision", "scope": "base"}
+    ]
+
+
+def test_managed_source_anchor_stays_in_its_optional_scope(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = []
+
+        [project.optional-dependencies]
+        serve = ["vllm"]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=("serve",), groups=(), overrides=()
+    )
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cu129"),
+        numpy_lt2_required=True,
+        managed_anchors=(ManagedSourceAnchor("torch", Scope("extra", "serve")),),
+    )
+
+    document = tomlkit.parse(content).unwrap()
+    assert document["project"]["dependencies"] == []
+    assert document["project"]["optional-dependencies"]["serve"] == [
+        "vllm",
+        "torch",
+        "numpy<2; sys_platform == 'linux'",
+    ]
+    assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
+        {"package": "torch", "scope": "extra:serve"}
     ]
 
 
@@ -166,7 +206,7 @@ def test_rejects_invalid_managed_source_anchor_state(tmp_path: Path) -> None:
             overrides=(),
             backend=BackendCandidate("cpu"),
             numpy_lt2_required=False,
-            source_packages=frozenset({"torch"}),
+            managed_anchors=(ManagedSourceAnchor("torch", Scope("base")),),
         )
 
 
@@ -218,7 +258,7 @@ def test_render_preserves_comments_guards_old_sources_and_is_idempotent(
     document = tomlkit.parse(first).unwrap()
     assert first == second
     assert "# retained comment" in first
-    assert "sys_platform != 'linux'" in first
+    assert 'sys_platform != \\"linux\\"' in first
     assert document["project"]["dependencies"].count("torch>=2.6") == 1
     assert "numpy<2; sys_platform == 'linux'" in document["project"]["dependencies"]
     assert set(document["tool"]["uv"]["sources"]) == {
@@ -260,6 +300,66 @@ def test_nonofficial_same_name_index_is_not_overwritten(tmp_path: Path) -> None:
             backend=BackendCandidate("cpu"),
             numpy_lt2_required=False,
         )
+
+
+@pytest.mark.parametrize("requirement", ["numpy>=2", "numpy>=3", "numpy==2.*"])
+def test_numpy_repair_rejects_requirements_without_a_lt2_solution(
+    tmp_path: Path,
+    requirement: str,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        f"""
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["torch", "{requirement}"]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    ).for_interpreter("3.12.1", "cpython", "CPython")
+
+    with pytest.raises(ProjectUpdateError, match="conflicts with numpy<2"):
+        render_project_configuration(
+            pyproject,
+            requirements=requirements,
+            overrides=(),
+            backend=BackendCandidate("cpu"),
+            numpy_lt2_required=True,
+        )
+
+
+def test_numpy_repair_uses_the_resolved_interpreter_marker_environment(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = [
+          "torch",
+          "numpy>=2; python_version < '3.12'",
+        ]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    ).for_interpreter("3.12.1", "cpython", "CPython")
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cpu"),
+        numpy_lt2_required=True,
+    )
+
+    assert "numpy<2; sys_platform == 'linux'" in content
 
 
 def test_unknown_scope_fails_before_render(tmp_path: Path) -> None:
@@ -348,3 +448,63 @@ def test_overlapping_exact_versions_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="conflicting exact"):
         read_project_requirements(pyproject, extras=(), groups=(), overrides=())
+
+
+def test_exact_override_replaces_the_original_requirement(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["torch==2.9.0"]
+        """,
+    )
+
+    requirements = read_project_requirements(
+        pyproject,
+        extras=(),
+        groups=(),
+        overrides=("torch==2.10.0",),
+    )
+
+    assert str(requirements.requirement_for("torch")[0]) == "torch==2.10.0"
+
+
+def test_source_marker_with_non_linux_or_branch_is_still_guarded(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["torch"]
+
+        [tool.uv.sources]
+        torch = [
+            { index = "old", marker = "sys_platform != 'linux' or python_version < '3.12'" },
+        ]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    )
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cpu"),
+        numpy_lt2_required=False,
+    )
+
+    assert (
+        '(sys_platform != \\"linux\\" or python_version < \\"3.12\\") '
+        'and sys_platform != \\"linux\\"'
+    ) in content

@@ -11,6 +11,7 @@ from packaging.markers import InvalidMarker, Marker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 from tomlkit.exceptions import ParseError
 from tomlkit.items import AoT
 
@@ -28,6 +29,8 @@ from uv_torch_compass.domain import (
     ScopedRequirement,
 )
 from uv_torch_compass.errors import ConfigurationError, ProjectUpdateError
+from uv_torch_compass.index_url import canonical_official_pytorch_url
+from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
 _OFFICIAL_INDEX_PREFIX = "https://download.pytorch.org/whl/"
 _LINUX_MARKER = "sys_platform == 'linux'"
@@ -122,7 +125,11 @@ def read_project_requirements(
             parsed.append(_scoped_requirement(scope, "torch"))
         selected.extend(parsed)
 
-    all_pytorch = _read_all_pytorch(project, optional, dependency_groups)
+    all_pytorch = _read_all_pytorch(
+        scope_values[0][1],
+        optional,
+        dependency_groups,
+    )
     _reject_conflicting_exact_versions((*selected, *all_pytorch))
     return ProjectRequirements(
         requires_python=requires_python,
@@ -140,7 +147,7 @@ def render_project_configuration(
     overrides: tuple[str, ...],
     backend: BackendCandidate,
     numpy_lt2_required: bool,
-    source_packages: frozenset[str] | None = None,
+    managed_anchors: tuple[ManagedSourceAnchor, ...] = (),
     required_environment: str | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     """Render a comment-preserving project update without writing it.
@@ -180,7 +187,7 @@ def render_project_configuration(
                 values.append("torch")
                 changes.append(f"added torch to {scope.label}")
             if numpy_lt2_required and effective_packages.intersection(PYTORCH_PACKAGES):
-                _ensure_numpy_lt2(values, scope)
+                _ensure_numpy_lt2(values, scope, requirements.environment())
                 changes.append(f"added Linux NumPy constraint to {scope.label}")
 
         tool = _ensure_table(document, "tool")
@@ -192,25 +199,46 @@ def render_project_configuration(
             for item in requirements.selected
             if item.package in PYTORCH_PACKAGES
         }
-        direct_packages = declared_packages.difference(previous_managed)
-        packages = direct_packages if source_packages is None else set(source_packages)
+        previous_packages = {anchor.package for anchor in previous_managed}
+        direct_packages = declared_packages.difference(previous_packages)
+        effective_anchors = tuple(
+            anchor
+            for anchor in managed_anchors
+            if anchor.package not in direct_packages
+        )
+        packages = direct_packages.union(anchor.package for anchor in effective_anchors)
         unknown_packages = packages.difference(PYTORCH_PACKAGES)
         if unknown_packages:
             raise ProjectUpdateError(
                 "unsupported PyTorch source packages: "
                 + ", ".join(sorted(unknown_packages))
             )
-        managed_anchors = packages.difference(direct_packages)
-        stale_anchors = previous_managed.difference(managed_anchors)
-        for package in sorted(stale_anchors):
-            _remove_bare_requirement(base, package)
-        if managed_anchors:
-            for package in sorted(managed_anchors):
-                if package not in _dependency_names(base):
-                    base.append(package)
+        stale_anchors = set(previous_managed).difference(effective_anchors)
+        for anchor in sorted(
+            stale_anchors,
+            key=lambda value: (value.scope.label, value.package),
+        ):
+            _remove_bare_requirement(
+                _scope_array(document, anchor.scope),
+                anchor.package,
+            )
+        if effective_anchors:
+            for anchor in effective_anchors:
+                values = _scope_array(document, anchor.scope)
+                if anchor.package not in _dependency_names(values):
+                    values.append(anchor.package)
+                if numpy_lt2_required:
+                    _ensure_numpy_lt2(
+                        values,
+                        anchor.scope,
+                        requirements.environment(),
+                    )
             changes.append(
                 "added managed PyTorch source anchors: "
-                + ", ".join(sorted(managed_anchors))
+                + ", ".join(
+                    f"{anchor.package} in {anchor.scope.label}"
+                    for anchor in effective_anchors
+                )
             )
         uv = _ensure_table(tool, "uv")
         if required_environment is not None:
@@ -221,7 +249,7 @@ def render_project_configuration(
             sources[package] = _linux_source_value(sources.get(package), backend)
         if packages:
             changes.append("configured the verified Linux PyTorch index")
-        state["managed-source-anchors"] = sorted(managed_anchors)
+        state["managed-source-anchors"] = _managed_anchor_values(effective_anchors)
 
         indexes = uv.get("index")
         if indexes is None:
@@ -294,17 +322,20 @@ def read_configured_backend(
         )
     index_name = next(iter(selected_names))
     index_url = index_urls.get(index_name)
-    if not isinstance(index_url, str) or not index_url.startswith(
-        _OFFICIAL_INDEX_PREFIX
-    ):
+    canonical_url = (
+        canonical_official_pytorch_url(index_url)
+        if isinstance(index_url, str)
+        else None
+    )
+    if canonical_url is None:
         raise ConfigurationError(
             f"index {index_name!r} is not an official PyTorch index"
         )
-    path = index_url.removeprefix(_OFFICIAL_INDEX_PREFIX).strip("/")
+    path = canonical_url.removeprefix(_OFFICIAL_INDEX_PREFIX)
     channel = Channel.NIGHTLY if path.startswith("nightly/") else Channel.STABLE
     backend = path.removeprefix("nightly/")
     candidate = BackendCandidate(backend, channel)
-    if candidate.index_name != index_name or candidate.index_url != index_url:
+    if candidate.index_name != index_name or candidate.index_url != canonical_url:
         raise ConfigurationError(
             f"index {index_name!r} does not match its official URL {index_url!r}"
         )
@@ -364,10 +395,24 @@ def _scoped_requirement(scope: Scope, raw: str) -> ScopedRequirement:
 def _apply_requirement_overrides(
     values: Iterable[object], overrides: Mapping[str, str]
 ) -> list[str]:
+    materialized = [str(value) for value in values]
+    counts: dict[str, int] = {}
+    for text in materialized:
+        try:
+            package = str(canonicalize_name(Requirement(text).name))
+        except InvalidRequirement:
+            continue
+        counts[package] = counts.get(package, 0) + 1
+    ambiguous = sorted(package for package in overrides if counts.get(package, 0) > 1)
+    if ambiguous:
+        raise ConfigurationError(
+            "dependency overrides are ambiguous for repeated base requirements: "
+            + ", ".join(ambiguous)
+        )
+
     remaining = dict(overrides)
     updated: list[str] = []
-    for raw in values:
-        text = str(raw)
+    for text in materialized:
         try:
             package = canonicalize_name(Requirement(text).name)
         except InvalidRequirement:
@@ -379,7 +424,7 @@ def _apply_requirement_overrides(
 
 
 def _read_all_pytorch(
-    project: Mapping[str, object],
+    base: Iterable[str],
     optional: Mapping[str, object],
     groups: Mapping[str, object],
 ) -> list[ScopedRequirement]:
@@ -387,7 +432,7 @@ def _read_all_pytorch(
     scope_arrays: list[tuple[Scope, list[str]]] = [
         (
             Scope("base"),
-            _string_array(project.get("dependencies", []), "[project].dependencies"),
+            list(base),
         )
     ]
     scope_arrays.extend(
@@ -547,14 +592,63 @@ def _ensure_required_environment(uv: Mapping[str, object], marker: str) -> None:
     cast(Any, uv)["required-environments"] = values
 
 
-def _managed_source_anchors(state: Mapping[str, object]) -> set[str]:
+def _managed_source_anchors(
+    state: Mapping[str, object],
+) -> set[ManagedSourceAnchor]:
     raw = state.get("managed-source-anchors", [])
-    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
-        raise ProjectUpdateError("managed-source-anchors must be an array of strings")
-    anchors = {str(canonicalize_name(item)) for item in cast(list[str], raw)}
-    if not anchors.issubset(PYTORCH_PACKAGES):
-        raise ProjectUpdateError("managed-source-anchors contains an unknown package")
+    if not isinstance(raw, list):
+        raise ProjectUpdateError("managed-source-anchors must be an array")
+    anchors: set[ManagedSourceAnchor] = set()
+    for item in raw:
+        # Schema 4 stored package names only. Reading them as base-scope anchors
+        # lets the first schema 5 update migrate without leaving stale entries.
+        if isinstance(item, str):
+            package = str(canonicalize_name(item))
+            scope = Scope("base")
+        elif isinstance(item, Mapping) and set(item) == {"package", "scope"}:
+            entry = cast(Mapping[str, object], item)
+            package_value = entry["package"]
+            scope_value = entry["scope"]
+            if not isinstance(package_value, str) or not isinstance(scope_value, str):
+                raise ProjectUpdateError(
+                    "managed-source-anchors entries require string package and scope"
+                )
+            package = str(canonicalize_name(package_value))
+            scope = _scope_from_label(scope_value)
+        else:
+            raise ProjectUpdateError(
+                "managed-source-anchors entries must be package/scope tables"
+            )
+        if package not in PYTORCH_PACKAGES:
+            raise ProjectUpdateError(
+                "managed-source-anchors contains an unknown package"
+            )
+        anchors.add(ManagedSourceAnchor(package, scope))
     return anchors
+
+
+def _managed_anchor_values(
+    anchors: Iterable[ManagedSourceAnchor],
+) -> list[object]:
+    values: list[object] = []
+    for anchor in sorted(anchors, key=lambda item: (item.scope.label, item.package)):
+        value = tomlkit.inline_table()
+        value["package"] = anchor.package
+        value["scope"] = anchor.scope.label
+        values.append(value)
+    return values
+
+
+def _scope_from_label(label: str) -> Scope:
+    if label == "base":
+        return Scope("base")
+    kind, separator, name = label.partition(":")
+    if not separator or not name:
+        raise ProjectUpdateError(f"invalid managed source scope {label!r}")
+    try:
+        return Scope(kind, name)
+    except ConfigurationError as exc:
+        raise ProjectUpdateError(f"invalid managed source scope {label!r}") from exc
 
 
 def _remove_bare_requirement(values: MutableSequence[object], package: str) -> None:
@@ -576,8 +670,12 @@ def _remove_bare_requirement(values: MutableSequence[object], package: str) -> N
             values.pop(position)
 
 
-def _ensure_numpy_lt2(values: MutableSequence[object], scope: Scope) -> None:
-    linux_environment = cast(dict[str, str], dict(default_environment()))
+def _ensure_numpy_lt2(
+    values: MutableSequence[object],
+    scope: Scope,
+    environment: Mapping[str, str],
+) -> None:
+    linux_environment = dict(environment)
     linux_environment.update({"sys_platform": "linux", "platform_system": "Linux"})
     for value in values:
         if not isinstance(value, str):
@@ -593,20 +691,43 @@ def _ensure_numpy_lt2(values: MutableSequence[object], scope: Scope) -> None:
         )
         if not applies:
             continue
-        if any(
-            spec.operator in {">", ">=", "~=", "==", "==="}
-            and spec.version.lstrip("=").startswith("2")
-            for spec in requirement.specifier
-        ):
+        if _numpy_specifier_excludes_all_lt2(requirement.specifier):
             raise ProjectUpdateError(
                 f"numpy requirement in {scope.label} conflicts with numpy<2"
             )
-        if any(
-            spec.operator == "<" and spec.version == "2"
-            for spec in requirement.specifier
-        ):
+        if _numpy_specifier_guarantees_lt2(requirement.specifier):
             return
     values.append("numpy<2; sys_platform == 'linux'")
+
+
+def _numpy_specifier_excludes_all_lt2(specifiers: SpecifierSet) -> bool:
+    for specifier in specifiers:
+        raw = specifier.version.rstrip(".*")
+        try:
+            version = Version(raw)
+        except InvalidVersion:
+            continue
+        if specifier.operator in {">", ">="} and version >= Version("2"):
+            return True
+        if specifier.operator in {"==", "===", "~="} and version >= Version("2"):
+            return True
+    return False
+
+
+def _numpy_specifier_guarantees_lt2(specifiers: SpecifierSet) -> bool:
+    for specifier in specifiers:
+        raw = specifier.version.rstrip(".*")
+        try:
+            version = Version(raw)
+        except InvalidVersion:
+            continue
+        if specifier.operator == "<" and version <= Version("2"):
+            return True
+        if specifier.operator == "<=" and version < Version("2"):
+            return True
+        if specifier.operator in {"==", "===", "~="} and version < Version("2"):
+            return True
+    return False
 
 
 def _ensure_table(parent: Any, key: str) -> Any:
@@ -666,9 +787,43 @@ def _guard_non_linux(marker: str) -> str:
         normalized = str(Marker(marker))
     except InvalidMarker as exc:
         raise ProjectUpdateError(f"invalid source marker {marker!r}") from exc
-    if _NON_LINUX_MARKER in normalized.replace('"', "'"):
-        return marker
-    return f"({marker}) and {_NON_LINUX_MARKER}"
+    if any(
+        conjunct.replace('"', "'").strip(" ()") == _NON_LINUX_MARKER
+        for conjunct in _top_level_conjuncts(normalized)
+    ):
+        return normalized
+    return str(Marker(f"({marker}) and {_NON_LINUX_MARKER}"))
+
+
+def _top_level_conjuncts(marker: str) -> tuple[str, ...]:
+    values: list[str] = []
+    start = 0
+    depth = 0
+    quote = ""
+    position = 0
+    while position < len(marker):
+        character = marker[position]
+        if quote:
+            if character == quote:
+                quote = ""
+            position += 1
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            position += 1
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        elif depth == 0 and marker[position : position + 5] == " and ":
+            values.append(marker[start:position])
+            start = position + 5
+            position += 5
+            continue
+        position += 1
+    values.append(marker[start:])
+    return tuple(values)
 
 
 def _ensure_verified_index(indexes: AoT, backend: BackendCandidate) -> None:
@@ -676,10 +831,16 @@ def _ensure_verified_index(indexes: AoT, backend: BackendCandidate) -> None:
         if entry.get("name") != backend.index_name:
             continue
         existing_url = entry.get("url")
-        if existing_url != backend.index_url:
+        canonical_url = (
+            canonical_official_pytorch_url(existing_url)
+            if isinstance(existing_url, str)
+            else None
+        )
+        if canonical_url != backend.index_url:
             raise ProjectUpdateError(
                 f"index {backend.index_name!r} already uses a non-matching URL"
             )
+        entry["url"] = canonical_url
         entry["explicit"] = True
         return
     entry = tomlkit.table()
@@ -700,7 +861,7 @@ def _remove_unreferenced_official_indexes(
         if (
             isinstance(name, str)
             and isinstance(url, str)
-            and url.startswith(_OFFICIAL_INDEX_PREFIX)
+            and canonical_official_pytorch_url(url) is not None
             and name != selected_name
             and name not in referenced
         ):

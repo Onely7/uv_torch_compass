@@ -7,6 +7,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from uv_torch_compass.candidate_project import render_candidate_project
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
@@ -17,9 +18,9 @@ from uv_torch_compass.cuda_compatibility import (
 from uv_torch_compass.domain import (
     BackendCandidate,
     CandidateAttempt,
+    FrameworkProbe,
     ProbeProfile,
     ProjectRequirements,
-    ResolutionFailure,
     RuntimeReport,
 )
 from uv_torch_compass.errors import (
@@ -28,49 +29,29 @@ from uv_torch_compass.errors import (
     ConfigurationError,
     ProbeError,
 )
-from uv_torch_compass.installed_metadata import read_installed_distributions
+from uv_torch_compass.framework_validation import (
+    FrameworkValidation,
+    framework_validation_document,
+    parse_framework_probe,
+)
+from uv_torch_compass.installed_metadata import (
+    InstalledDistribution,
+    read_installed_distributions,
+)
 from uv_torch_compass.nvidia import NvidiaSnapshot
+from uv_torch_compass.probe_contract import (
+    CandidateProbeResult,
+    ProbeContract,
+    ProbeOutcome,
+)
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.resolution_diagnostics import (
     interpret_uv_failure,
     runtime_failure,
     timeout_failure,
 )
+from uv_torch_compass.source_ownership import derive_managed_source_anchors
 from uv_torch_compass.uv_commands import UvCommandClient
-
-
-@dataclass(frozen=True, slots=True)
-class ProbeOutcome:
-    """Contain the first verified runtime and any required NumPy repair."""
-
-    runtime: RuntimeReport
-    compatibility: CompatibilityDecision
-    numpy_lt2_required: bool
-    attempts: tuple[CandidateAttempt, ...]
-    installed_pytorch: frozenset[str] = frozenset()
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateProbeResult:
-    """Represent either a verified candidate or a generic rejected candidate."""
-
-    outcome: ProbeOutcome | None
-    failure: ResolutionFailure | None
-
-    def __post_init__(self) -> None:
-        """Require exactly one success outcome or failure reason."""
-        if (self.outcome is None) == (self.failure is None):
-            raise ValueError("candidate result requires either an outcome or a failure")
-
-    @classmethod
-    def passed(cls, outcome: ProbeOutcome) -> CandidateProbeResult:
-        """Create a successful candidate result."""
-        return cls(outcome, None)
-
-    @classmethod
-    def failed(cls, failure: ResolutionFailure) -> CandidateProbeResult:
-        """Create a failed candidate result."""
-        return cls(None, failure)
 
 
 @dataclass(slots=True)
@@ -88,6 +69,9 @@ class CandidateProbeService:
     nvidia: NvidiaSnapshot | None
     compatibility_policy: CompatibilityPolicy
     probe_profile: ProbeProfile
+    target_pyproject: Path
+    workspace_members: tuple[tuple[str, Path], ...] = ()
+    framework_probes: tuple[FrameworkProbe, ...] = ()
 
     def find_working_candidate(
         self,
@@ -140,6 +124,8 @@ class CandidateProbeService:
                 outcome.numpy_lt2_required,
                 tuple(attempts),
                 outcome.installed_pytorch,
+                outcome.source_anchors,
+                outcome.framework_validation,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CandidateResolutionError(
@@ -148,32 +134,33 @@ class CandidateProbeService:
         )
 
     def _probe_candidate(self, candidate: BackendCandidate) -> CandidateProbeResult:
-        venv = Path(
+        candidate_root = Path(
             tempfile.mkdtemp(
                 prefix=f"candidate-{candidate.value}-", dir=self.temporary_root
             )
         )
+        venv = candidate_root / "environment"
         self.reporter.info(f"testing backend candidate {candidate.value}")
         try:
-            created = self.uv.create_venv(
-                venv, self.project_python, cwd=self.temporary_root
+            project = render_candidate_project(
+                self.target_pyproject,
+                destination=candidate_root / "project",
+                requirements=self.requirements.probe_requirements,
+                candidate=candidate,
+                workspace_members=dict(self.workspace_members),
             )
-        except CommandTimeoutError:
-            return CandidateProbeResult.failed(timeout_failure("environment creation"))
-        self.reporter.detail(created.stdout + created.stderr)
-        if created.returncode != 0:
-            self.reporter.warn(f"candidate {candidate.value}: venv creation failed")
-            return CandidateProbeResult.failed(
-                runtime_failure(
-                    "The candidate virtual environment could not be created."
-                )
-            )
-        try:
-            installed = self.uv.install_candidate(
-                venv, self.requirements.probe_requirements, candidate
+            installed = self.uv.sync_candidate(
+                venv,
+                project.parent,
+                self.project_python,
             )
         except CommandTimeoutError:
             return CandidateProbeResult.failed(timeout_failure("installation"))
+        except ConfigurationError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return CandidateProbeResult.failed(
+                runtime_failure("The candidate source policy could not be prepared.")
+            )
         self.reporter.detail(installed.stdout + installed.stderr)
         if installed.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: installation failed")
@@ -186,9 +173,10 @@ class CandidateProbeService:
             )
 
         try:
+            installed_distributions = read_installed_distributions(venv)
             installed_pytorch = frozenset(
                 distribution.name
-                for distribution in read_installed_distributions(venv)
+                for distribution in installed_distributions
                 if distribution.name in {"torch", "torchvision", "torchaudio"}
             )
         except ProbeError as exc:
@@ -204,18 +192,20 @@ class CandidateProbeService:
                 runtime_failure("The selected dependencies did not install torch.")
             )
 
-        validation = self._run_probe(venv, candidate, installed_pytorch)
+        contract = ProbeContract.for_installed_packages(
+            installed_pytorch,
+            self.probe_profile,
+        )
+        validation = self._run_probe(venv, candidate, contract)
         if validation.returncode == 0:
             outcome = self._parse_success(
-                validation.stdout, candidate, False, installed_pytorch
+                validation.stdout,
+                candidate,
+                False,
+                contract,
+                installed_distributions,
             )
-            return (
-                CandidateProbeResult.passed(outcome)
-                if outcome is not None
-                else CandidateProbeResult.failed(
-                    runtime_failure("The candidate runtime validation failed.")
-                )
-            )
+            return self._finalize_candidate(venv, candidate, outcome)
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
             self.reporter.warn(
@@ -236,7 +226,7 @@ class CandidateProbeService:
                     "The NumPy compatibility repair could not be installed."
                 )
             )
-        validation = self._run_probe(venv, candidate, installed_pytorch)
+        validation = self._run_probe(venv, candidate, contract)
         self.reporter.detail(validation.stdout + validation.stderr)
         if validation.returncode != 0:
             return CandidateProbeResult.failed(
@@ -245,21 +235,82 @@ class CandidateProbeService:
                 )
             )
         outcome = self._parse_success(
-            validation.stdout, candidate, True, installed_pytorch
+            validation.stdout,
+            candidate,
+            True,
+            contract,
+            installed_distributions,
         )
-        return (
-            CandidateProbeResult.passed(outcome)
-            if outcome is not None
-            else CandidateProbeResult.failed(
+        return self._finalize_candidate(venv, candidate, outcome)
+
+    def _finalize_candidate(
+        self,
+        venv: Path,
+        candidate: BackendCandidate,
+        outcome: ProbeOutcome | None,
+    ) -> CandidateProbeResult:
+        if outcome is None:
+            return CandidateProbeResult.failed(
                 runtime_failure("The candidate runtime validation failed.")
             )
+        framework_probes = self._framework_probes(venv, candidate)
+        if isinstance(framework_probes, CandidateProbeResult):
+            return framework_probes
+        return CandidateProbeResult.passed(
+            ProbeOutcome(
+                outcome.runtime,
+                outcome.compatibility,
+                outcome.numpy_lt2_required,
+                outcome.attempts,
+                outcome.installed_pytorch,
+                outcome.source_anchors,
+                framework_probes,
+            )
         )
+
+    def _framework_probes(
+        self,
+        venv: Path,
+        candidate: BackendCandidate,
+    ) -> tuple[FrameworkValidation, ...] | CandidateProbeResult:
+        requested = self.framework_probes
+        if not requested:
+            return ()
+        arguments: list[str | Path] = [
+            venv / "bin" / "python",
+            Path(__file__).with_name("framework_probe.py").resolve(),
+            "--expected-backend",
+            candidate.value,
+        ]
+        for framework in requested:
+            arguments.extend(["--framework", framework.value])
+        environment, _ = sanitized_environment(os.environ)
+        try:
+            result = self.runner.run(
+                arguments,
+                env=environment,
+                timeout_seconds=self.uv.diagnostic_timeout_seconds,
+            )
+        except CommandTimeoutError:
+            return CandidateProbeResult.failed(timeout_failure("framework validation"))
+        self.reporter.detail(result.stdout + result.stderr)
+        try:
+            validations = parse_framework_probe(result.stdout, requested)
+        except ProbeError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return CandidateProbeResult.failed(runtime_failure(str(exc)))
+        if result.returncode != 0:
+            return CandidateProbeResult.failed(
+                runtime_failure("The candidate framework validation failed.")
+            )
+        self.reporter.detail(str(framework_validation_document(validations)))
+        return validations
 
     def _run_probe(
         self,
         venv: Path,
         candidate: BackendCandidate,
-        installed_pytorch: frozenset[str],
+        contract: ProbeContract,
     ):
         expected = candidate.value if candidate.is_concrete else None
         arguments: list[str | Path] = [venv / "bin" / "python", self.runtime_probe]
@@ -271,9 +322,9 @@ class CandidateProbeService:
             and self._compatibility_for(candidate).level is CompatibilityLevel.MINOR
         ):
             arguments.append("--require-native-architecture")
-        if "torchvision" in installed_pytorch:
+        if contract.validates("torchvision"):
             arguments.append("--validate-torchvision")
-        if "torchaudio" in installed_pytorch:
+        if contract.validates("torchaudio"):
             arguments.append("--validate-torchaudio")
         overrides = (
             {"CUDA_VISIBLE_DEVICES": self.cuda_device} if self.cuda_device else None
@@ -290,7 +341,8 @@ class CandidateProbeService:
         output: str,
         candidate: BackendCandidate,
         numpy_lt2_required: bool,
-        installed_pytorch: frozenset[str],
+        contract: ProbeContract,
+        installed_distributions: tuple[InstalledDistribution, ...],
     ) -> ProbeOutcome | None:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
@@ -316,10 +368,11 @@ class CandidateProbeService:
         try:
             report.validate_probe_results(
                 self.requirements,
-                expected_profile=self.probe_profile,
+                expected_profile=contract.profile,
                 require_native_architecture=(
                     compatibility.level is CompatibilityLevel.MINOR
                 ),
+                expected_packages=contract.expected_pytorch,
             )
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
@@ -329,7 +382,11 @@ class CandidateProbeService:
             compatibility,
             numpy_lt2_required,
             (),
-            installed_pytorch,
+            contract.installed_pytorch,
+            derive_managed_source_anchors(
+                installed_distributions,
+                self.requirements,
+            ),
         )
 
     def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:
