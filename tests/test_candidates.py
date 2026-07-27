@@ -17,7 +17,11 @@ from uv_torch_compass.domain import (
     Scope,
     ScopedRequirement,
 )
-from uv_torch_compass.errors import CandidateResolutionError, CommandError
+from uv_torch_compass.errors import (
+    CandidateResolutionError,
+    CommandError,
+    CommandTimeoutError,
+)
 from uv_torch_compass.nvidia import NvidiaDevice, NvidiaSnapshot
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.uv_commands import UvCommandClient
@@ -371,6 +375,31 @@ def test_install_failure_preserves_structured_resolution_context(
     assert failure.package.name == "torch"
     assert failure.index is not None
     assert failure.index.name == "pytorch-cu121"
+
+
+def test_install_timeout_is_preserved_as_candidate_diagnostic(
+    tmp_path: Path,
+) -> None:
+    class TimeoutUv(ProbeUv):
+        def install_candidate(
+            self, path: Path, requirements, candidate, *, dry_run: bool = False
+        ) -> CommandResult:
+            del path, requirements, candidate, dry_run
+            raise CommandTimeoutError("timed out")
+
+    service = _service(
+        tmp_path,
+        TimeoutUv(),
+        ProbeRunner([]),
+        ProbeReporter(),
+    )
+
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate((BackendCandidate("cpu"),))
+
+    failure = captured.value.attempts[0].failure
+    assert failure is not None
+    assert failure.kind.value == "timeout"
 
 
 def test_probe_does_not_retry_non_numpy_or_failed_repair(tmp_path: Path) -> None:

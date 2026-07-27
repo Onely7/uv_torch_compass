@@ -24,6 +24,7 @@ from uv_torch_compass.domain import (
 )
 from uv_torch_compass.errors import (
     CandidateResolutionError,
+    CommandTimeoutError,
     ConfigurationError,
     ProbeError,
 )
@@ -33,6 +34,7 @@ from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.resolution_diagnostics import (
     interpret_uv_failure,
     runtime_failure,
+    timeout_failure,
 )
 from uv_torch_compass.uv_commands import UvCommandClient
 
@@ -108,7 +110,11 @@ class CandidateProbeService:
                 attempts.append(
                     CandidateAttempt(
                         candidate.value,
-                        "install",
+                        (
+                            "runtime"
+                            if failure.kind.value == "runtime-validation"
+                            else "install"
+                        ),
                         "failed",
                         failure.summary,
                         self._compatibility_for(candidate).level.value,
@@ -148,9 +154,12 @@ class CandidateProbeService:
             )
         )
         self.reporter.info(f"testing backend candidate {candidate.value}")
-        created = self.uv.create_venv(
-            venv, self.project_python, cwd=self.temporary_root
-        )
+        try:
+            created = self.uv.create_venv(
+                venv, self.project_python, cwd=self.temporary_root
+            )
+        except CommandTimeoutError:
+            return CandidateProbeResult.failed(timeout_failure("environment creation"))
         self.reporter.detail(created.stdout + created.stderr)
         if created.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: venv creation failed")
@@ -159,9 +168,12 @@ class CandidateProbeService:
                     "The candidate virtual environment could not be created."
                 )
             )
-        installed = self.uv.install_candidate(
-            venv, self.requirements.probe_requirements, candidate
-        )
+        try:
+            installed = self.uv.install_candidate(
+                venv, self.requirements.probe_requirements, candidate
+            )
+        except CommandTimeoutError:
+            return CandidateProbeResult.failed(timeout_failure("installation"))
         self.reporter.detail(installed.stdout + installed.stderr)
         if installed.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: installation failed")

@@ -40,6 +40,11 @@ _DISTRIBUTION = re.compile(
     r"(?:(?:===|==)[^@\s`']+)?)",
     re.IGNORECASE,
 )
+_BUILD_PACKAGE = re.compile(
+    r"(?:Failed to build|build backend.*for)\s+[`']"
+    r"(?P<requirement>[A-Za-z0-9_.-]+(?:(?:===|==)[^`\s']+)?)",
+    re.IGNORECASE,
+)
 _FOUND_ON_INDEX = re.compile(
     r"(?P<package>[A-Za-z0-9_.-]+)\s+was found on\s+"
     r"(?P<url>https?://[^\s,]+)",
@@ -178,6 +183,17 @@ def runtime_failure(summary: str) -> ResolutionFailure:
     )
 
 
+def timeout_failure(stage: str) -> ResolutionFailure:
+    """Create a timeout diagnostic for one candidate operation stage."""
+    return ResolutionFailure(
+        ResolutionFailureKind.TIMEOUT,
+        f"The candidate {stage} command exceeded its timeout.",
+        suggestions=(
+            "Retry after checking index availability and the configured timeout.",
+        ),
+    )
+
+
 def _normalize_output(output: str) -> str:
     without_ansi = _ANSI_ESCAPE.sub("", output)
     printable = "".join(
@@ -212,13 +228,16 @@ def _dependency_context(
 
 
 def _package_from_failure(output: str) -> FailedPackage | None:
-    for pattern in (_DISTRIBUTION, _NO_VERSION):
+    for pattern in (_DISTRIBUTION, _BUILD_PACKAGE, _NO_VERSION):
         match = pattern.search(output)
         if match is None:
             continue
         requirement = _parse_requirement(match.group("requirement"))
         if requirement is not None:
             return _failed_package(requirement)
+    index_match = _FOUND_ON_INDEX.search(output)
+    if index_match is not None:
+        return FailedPackage(str(canonicalize_name(index_match.group("package"))))
     return None
 
 

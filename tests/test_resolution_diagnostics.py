@@ -66,6 +66,11 @@ def test_reports_dependency_conflict() -> None:
         ("failed to connect: DNS failure", ResolutionFailureKind.NETWORK),
         ("Failed to build `legacy==1`", ResolutionFailureKind.BUILD_FAILURE),
         ("unrecognized resolver prose", ResolutionFailureKind.UNKNOWN),
+        (
+            "packaging was found on https://test.pypi.org/simple, but not at "
+            "the requested version",
+            ResolutionFailureKind.NO_COMPATIBLE_DISTRIBUTION,
+        ),
     ],
 )
 def test_classifies_other_failure_boundaries(
