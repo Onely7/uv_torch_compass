@@ -19,6 +19,7 @@ from uv_torch_compass.command_runner import SubprocessRunner
 from uv_torch_compass.configuration import resolve_options
 from uv_torch_compass.domain import CommandOutcome
 from uv_torch_compass.errors import (
+    CandidateResolutionError,
     CompassError,
     ConfigurationError,
     ReportError,
@@ -108,6 +109,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
                     outcome, None, exit_code=1, error="operation interrupted"
                 )
                 return 1
+            except CandidateResolutionError as exc:
+                outcome = CommandOutcome(
+                    "failed",
+                    False,
+                    None,
+                    attempts=exc.attempts,
+                )
+                reporter.fail(str(exc))
+                reporter.emit_final(outcome, None, exit_code=1, error=str(exc))
+                return 1
             except CompassError as exc:
                 outcome = CommandOutcome("failed", False, None)
                 reporter.fail(str(exc))
@@ -161,7 +172,7 @@ def _add_selection_options(parser: argparse.ArgumentParser) -> None:
 def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
     if getattr(namespace, "output_format", None) == "json":
         document = {
-            "schema_version": 3,
+            "schema_version": 4,
             "operation": getattr(namespace, "operation", ""),
             "status": "failed",
             "exit_code": 1,
@@ -171,6 +182,7 @@ def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
             "request": {},
             "python": {},
             "candidate_attempts": [],
+            "resolution_failure": None,
             "selected_backend": "",
             "selected_index": "",
             "selected_gpu": None,

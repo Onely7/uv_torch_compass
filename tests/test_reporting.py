@@ -8,11 +8,16 @@ from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendCandidate,
     BackendRequest,
+    CandidateAttempt,
     Channel,
     CommandOutcome,
+    FailedIndex,
+    FailedPackage,
     Operation,
     OutputFormat,
     ProbeProfile,
+    ResolutionFailure,
+    ResolutionFailureKind,
     RunOptions,
     RuntimeReport,
 )
@@ -139,6 +144,51 @@ def test_text_report_prints_selection_diff_error_and_workspace(
     assert "Backend: cpu" in captured.out
     assert "Planned pyproject.toml diff" in captured.out
     assert "failed safely" in captured.err
+
+
+def test_text_report_explains_failed_candidate(tmp_path: Path, capsys) -> None:
+    options = _text_options(tmp_path)
+    failure = ResolutionFailure(
+        ResolutionFailureKind.NO_COMPATIBLE_DISTRIBUTION,
+        "The required package build is unavailable from this index.",
+        FailedPackage("torch", "2.10.0", "torch==2.10.0"),
+        ("vllm>=0.25.0", "torch==2.10.0"),
+        FailedIndex(
+            "pytorch-cu121",
+            "https://download.pytorch.org/whl/cu121",
+        ),
+        "linux-x86_64",
+        ("Select a compatible vLLM version.",),
+    )
+    reporter = CommandReporter(options, "0.1.0")
+
+    with reporter:
+        reporter.emit_final(
+            CommandOutcome(
+                "failed",
+                False,
+                None,
+                attempts=(
+                    CandidateAttempt(
+                        "cu121",
+                        "install",
+                        "failed",
+                        failure.summary,
+                        "strict",
+                        failure,
+                    ),
+                ),
+            ),
+            None,
+            exit_code=1,
+            error="no usable backend",
+        )
+
+    captured = capsys.readouterr()
+    assert "Package: torch==2.10.0" in captured.out
+    assert "Required by: vllm>=0.25.0 -> torch==2.10.0" in captured.out
+    assert "Index: pytorch-cu121" in captured.out
+    assert "Suggestion: Select a compatible vLLM version." in captured.out
 
 
 def test_reporter_requires_context_and_wraps_atomic_write_failure(
