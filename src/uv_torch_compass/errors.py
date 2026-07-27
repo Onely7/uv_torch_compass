@@ -1,5 +1,12 @@
 """Application-specific exceptions exposed at internal layer boundaries."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from uv_torch_compass.domain import CandidateAttempt
+
 
 class CompassError(Exception):
     """Base class for recoverable uv-torch-compass failures."""
@@ -11,6 +18,15 @@ class ConfigurationError(CompassError):
 
 class CommandError(CompassError):
     """Indicate that a required external command could not be executed."""
+
+
+class CandidateResolutionError(CommandError):
+    """Preserve all candidate attempts when no backend can be resolved."""
+
+    def __init__(self, message: str, attempts: tuple[CandidateAttempt, ...]) -> None:
+        """Store immutable diagnostic attempts for the CLI reporting boundary."""
+        super().__init__(message)
+        self.attempts = attempts
 
 
 class CommandTimeoutError(CommandError):

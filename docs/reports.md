@@ -20,14 +20,14 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `2` and includes these top-level fields:
+The schema version is `4` and includes these top-level fields:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 4,
   "operation": "plan",
-  "status": "planned",
-  "exit_code": 0,
+  "status": "failed",
+  "exit_code": 1,
   "applied": false,
   "target": "/work/app/pyproject.toml",
   "workspace": "/work/app",
@@ -39,17 +39,37 @@ The schema version is `2` and includes these top-level fields:
   "python": {},
   "candidate_attempts": [
     {
-      "backend": "cu129",
-      "stage": "policy",
-      "status": "skipped",
-      "reason": "driver does not provide strict support",
-      "compatibility": "unsupported"
+      "backend": "cu121",
+      "stage": "install",
+      "status": "failed",
+      "reason": "The required package build is unavailable from this index.",
+      "compatibility": "strict",
+      "failure": {
+        "kind": "no-compatible-distribution",
+        "summary": "The required package build is unavailable from this index.",
+        "package": {
+          "name": "torch",
+          "version": "2.10.0",
+          "requirement": "torch==2.10.0"
+        },
+        "required_by": ["vllm>=0.25.0", "torch==2.10.0"],
+        "index": {
+          "name": "pytorch-cu121",
+          "url": "https://download.pytorch.org/whl/cu121"
+        },
+        "platform": null,
+        "suggestions": ["Select a dependency version compatible with a published PyTorch build."]
+      }
     }
   ],
-  "selected_backend": "cu124",
-  "selected_index": "https://download.pytorch.org/whl/cu124",
+  "resolution_failure": {},
+  "selected_backend": "",
+  "selected_index": "",
   "selected_gpu": {},
   "resolved_packages": {},
+  "dependency_roots": [],
+  "source_anchors": [],
+  "required_environment": "sys_platform == 'linux' and platform_machine == 'x86_64'",
   "validation": {},
   "changes": [],
   "backups": [],
@@ -61,14 +81,14 @@ The schema version is `2` and includes these top-level fields:
 
 The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. GPU metadata contains the selected device, NVIDIA driver version, and the CUDA maximum printed by `nvidia-smi`.
 
-Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, and `compatibility`. Policy-rejected candidates are recorded as `skipped` before installation. A successful CUDA `validation` includes:
+Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, and an optional `failure`. Policy-rejected candidates are recorded as `skipped` before installation. `resolution_failure` aggregates failed packages, indexes, and de-duplicated suggestions across all candidates. Missing facts are JSON `null`; they are never guessed. A successful CUDA `validation` includes:
 
 - resolved PyTorch CUDA runtime and runtime-component version;
 - required minimum driver and `strict`, `minor`, or `unsupported` classification;
 - GPU compute capability and PyTorch compiled architectures;
 - CUDA tensor, cuBLAS, cuDNN, native architecture, NumPy, `torchvision`, `torchaudio`, and optional compile results.
 
-Candidate details use redacted summaries rather than raw command data. Consumers should check `schema_version` before depending on fields.
+Candidate details use bounded, redacted summaries rather than raw command data. Full redacted uv output remains in the private log. Consumers should check `schema_version` before depending on fields.
 
 Possible status values are:
 

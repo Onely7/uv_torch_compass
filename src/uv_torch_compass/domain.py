@@ -212,17 +212,12 @@ class ProjectRequirements:
 
     @property
     def probe_requirements(self) -> tuple[str, ...]:
-        """Return de-duplicated requirements installed in candidate environments."""
-        values: list[str] = []
-        seen: set[str] = set()
-        for item in self.selected:
-            if item.package not in {*PYTORCH_PACKAGES, "numpy"}:
-                continue
-            normalized = str(item.requirement)
-            if normalized not in seen:
-                seen.add(normalized)
-                values.append(normalized)
-        return tuple(values)
+        """Return all selected roots installed in candidate environments."""
+        # Import locally to keep the foundational domain module independent of
+        # the policy object that consumes its requirement values.
+        from uv_torch_compass.dependency_roots import SelectedDependencyRoots
+
+        return SelectedDependencyRoots(self.selected).candidate_requirements
 
     def has_package(self, package: str) -> bool:
         """Return whether the selected scopes contain a direct package requirement."""
@@ -242,11 +237,7 @@ class ProjectRequirements:
         implementation_name: str,
         platform_implementation: str,
     ) -> ProjectRequirements:
-        """Return requirements whose markers apply to the resolved Linux runtime.
-
-        Raises:
-            ConfigurationError: If no selected PyTorch requirement applies.
-        """
+        """Return requirements whose markers apply to the resolved Linux runtime."""
         parsed_version = Version(version)
         environment = cast(dict[str, str], dict(default_environment()))
         environment.update(
@@ -267,9 +258,9 @@ class ProjectRequirements:
             if item.requirement.marker is None
             or item.requirement.marker.evaluate(environment)
         )
-        if not any(item.package in PYTORCH_PACKAGES for item in selected):
+        if not selected:
             raise ConfigurationError(
-                "no selected PyTorch requirement applies to the resolved interpreter"
+                "no selected dependency requirement applies to the resolved interpreter"
             )
         return ProjectRequirements(
             self.requires_python,
@@ -552,6 +543,51 @@ class CandidateAttempt:
     status: str
     reason: str
     compatibility: str
+    failure: ResolutionFailure | None = None
+
+
+class ResolutionFailureKind(str, Enum):
+    """Classify a candidate failure without exposing uv implementation details."""
+
+    NO_COMPATIBLE_DISTRIBUTION = "no-compatible-distribution"
+    DEPENDENCY_CONFLICT = "dependency-conflict"
+    WHEEL_UNAVAILABLE = "wheel-unavailable"
+    BUILD_FAILURE = "build-failure"
+    NETWORK = "network"
+    AUTHENTICATION = "authentication"
+    TIMEOUT = "timeout"
+    RUNTIME_VALIDATION = "runtime-validation"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class FailedPackage:
+    """Identify the package constraint implicated by uv when available."""
+
+    name: str
+    version: str | None = None
+    requirement: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FailedIndex:
+    """Identify the package index implicated by a candidate failure."""
+
+    name: str
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionFailure:
+    """Describe an actionable, redacted candidate resolution failure."""
+
+    kind: ResolutionFailureKind
+    summary: str
+    package: FailedPackage | None = None
+    required_by: tuple[str, ...] = ()
+    index: FailedIndex | None = None
+    platform: str | None = None
+    suggestions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

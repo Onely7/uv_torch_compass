@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -14,27 +13,9 @@ from typing import Any, TextIO
 
 from uv_torch_compass.domain import CommandOutcome, OutputFormat, RunOptions
 from uv_torch_compass.errors import ProjectUpdateError, ReportError
+from uv_torch_compass.redaction import redact
 from uv_torch_compass.safe_transaction import atomic_write_private
 from uv_torch_compass.workspace import WorkspaceContext
-
-_URL_USERINFO = re.compile(r"(https?://)[^/@\s]+@", re.IGNORECASE)
-_SECRET_QUERY = re.compile(
-    r"([?&](?:token|key|password|secret|signature|credential)=)[^&\s]+",
-    re.IGNORECASE,
-)
-_AUTHORIZATION = re.compile(r"(?im)^(authorization|proxy-authorization):\s*.+$")
-_SECRET_ASSIGNMENT = re.compile(
-    r"(?im)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|AUTH)"
-    r"[A-Z0-9_]*)\s*([=:])\s*([^\s]+)"
-)
-
-
-def redact(value: str) -> str:
-    """Remove common URL and header credential forms from diagnostic text."""
-    redacted = _URL_USERINFO.sub(r"\1<redacted>@", value)
-    redacted = _SECRET_QUERY.sub(r"\1<redacted>", redacted)
-    redacted = _AUTHORIZATION.sub(r"\1: <redacted>", redacted)
-    return _SECRET_ASSIGNMENT.sub(r"\1\2<redacted>", redacted)
 
 
 @dataclass(slots=True)
@@ -204,6 +185,15 @@ class CommandReporter:
                     f"  - {attempt['backend']}: {attempt['reason']}",
                     file=sys.stdout,
                 )
+        failed = [
+            attempt
+            for attempt in document["candidate_attempts"]
+            if attempt["status"] == "failed"
+        ]
+        if failed:
+            print("Failed candidates:", file=sys.stdout)
+            for attempt in failed:
+                _print_failed_attempt(attempt)
         print(f"Applied: {'yes' if document['applied'] else 'no'}", file=sys.stdout)
         if document["changes"]:
             print("Changes:", file=sys.stdout)
@@ -263,7 +253,7 @@ def _result_document(
                 "reason": outcome.compatibility.reason,
             }
     return {
-        "schema_version": 2,
+        "schema_version": 4,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -290,9 +280,11 @@ def _result_document(
                 "status": attempt.status,
                 "reason": redact(attempt.reason),
                 "compatibility": attempt.compatibility,
+                "failure": _failure_document(attempt.failure),
             }
             for attempt in outcome.attempts
         ],
+        "resolution_failure": _aggregate_resolution_failure(outcome),
         "selected_backend": selected_backend,
         "selected_index": selected_index,
         "selected_gpu": selected_gpu,
@@ -306,6 +298,9 @@ def _result_document(
             if runtime is not None
             else {}
         ),
+        "dependency_roots": outcome.metadata.get("dependency_roots", []),
+        "source_anchors": outcome.metadata.get("source_anchors", []),
+        "required_environment": outcome.metadata.get("required_environment", ""),
         "validation": runtime_document,
         "changes": list(outcome.changes),
         "backups": [str(path) for path in outcome.backups],
@@ -316,6 +311,91 @@ def _result_document(
         "timing": {"elapsed_seconds": round(elapsed_seconds, 3)},
         "log_file": str(log_path),
     }
+
+
+def _failure_document(failure: Any) -> dict[str, Any] | None:
+    if failure is None:
+        return None
+    package = (
+        {
+            "name": failure.package.name,
+            "version": failure.package.version,
+            "requirement": failure.package.requirement,
+        }
+        if failure.package is not None
+        else None
+    )
+    index = (
+        {"name": failure.index.name, "url": failure.index.url}
+        if failure.index is not None
+        else None
+    )
+    return {
+        "kind": failure.kind.value,
+        "summary": failure.summary,
+        "package": package,
+        "required_by": list(failure.required_by),
+        "index": index,
+        "platform": failure.platform,
+        "suggestions": list(failure.suggestions),
+    }
+
+
+def _aggregate_resolution_failure(outcome: CommandOutcome) -> dict[str, Any] | None:
+    failures = [
+        attempt.failure for attempt in outcome.attempts if attempt.failure is not None
+    ]
+    if not failures:
+        return None
+    packages = list(
+        dict.fromkeys(
+            failure.package.name for failure in failures if failure.package is not None
+        )
+    )
+    indexes = list(
+        dict.fromkeys(
+            failure.index.name or failure.index.url
+            for failure in failures
+            if failure.index is not None
+        )
+    )
+    suggestions = list(
+        dict.fromkeys(
+            suggestion for failure in failures for suggestion in failure.suggestions
+        )
+    )
+    return {
+        "summary": "No candidate satisfied the selected dependency graph.",
+        "packages": packages,
+        "indexes": indexes,
+        "suggestions": suggestions,
+    }
+
+
+def _print_failed_attempt(attempt: dict[str, Any]) -> None:
+    failure = attempt.get("failure")
+    if not isinstance(failure, dict):
+        print(f"  - {attempt['backend']}: {attempt['reason']}", file=sys.stdout)
+        return
+    print(
+        f"  - {attempt['backend']}: {failure['summary']}",
+        file=sys.stdout,
+    )
+    package = failure.get("package")
+    if isinstance(package, dict):
+        requirement = package.get("requirement") or package.get("name")
+        print(f"    Package: {requirement}", file=sys.stdout)
+    required_by = failure.get("required_by")
+    if required_by:
+        print(f"    Required by: {' -> '.join(required_by)}", file=sys.stdout)
+    index = failure.get("index")
+    if isinstance(index, dict):
+        label = index.get("name") or "package index"
+        print(f"    Index: {label} ({index.get('url', '')})", file=sys.stdout)
+    if failure.get("platform"):
+        print(f"    Platform: {failure['platform']}", file=sys.stdout)
+    for suggestion in failure.get("suggestions", []):
+        print(f"    Suggestion: {suggestion}", file=sys.stdout)
 
 
 def _redact_document(value: Any) -> Any:

@@ -38,11 +38,17 @@ training = [
 uv-torch-compass plan --extra vision --group training
 ```
 
-An unknown scope, unsupported group entry, include cycle, malformed requirement, conflicting exact PyTorch version, or a selection with no applicable PyTorch package is rejected before target files are changed.
+An unknown scope, unsupported group entry, include cycle, malformed requirement, or conflicting exact PyTorch version is rejected before target files are changed.
 
 If a selected scope effectively contains `torchvision` or `torchaudio` but no `torch`, the tool adds `torch` to that same scope in the proposed update. Include-group expansion is considered, so `training` in the example receives its own `torch` declaration.
 
-Requirements whose PEP 508 markers do not match the resolved Linux Python version and implementation are excluded from the probe. At least one applicable PyTorch requirement must remain.
+Requirements whose PEP 508 markers do not match the resolved Linux Python version and implementation are excluded from the probe. At least one dependency root must remain, and its resolved graph must install `torch`.
+
+## PyTorch introduced by another package
+
+The candidate environment resolves every dependency root from the selected scopes, not only direct PyTorch declarations. For example, `dependencies = ["vllm==0.19.1"]` is sufficient when that release declares PyTorch dependencies.
+
+uv requires a direct package key before `[tool.uv.sources]` can redirect a transitive dependency to an explicit index. After verification, uv-torch-compass therefore adds a bare `torch`, `torchvision`, or `torchaudio` source anchor to base dependencies when needed. The package version remains constrained by the original framework and the resolved lock. Added anchors are listed under `[tool.uv-torch-compass.state]`, so only tool-owned declarations can be removed later.
 
 Unselected extras and groups are not rewritten. They still participate when uv resolves the complete lockfile, so an incompatibility elsewhere in the project can make `uv lock` fail and trigger rollback.
 
@@ -68,6 +74,8 @@ explicit = true
 CUDA and nightly names follow `pytorch-cu128` and `pytorch-nightly-cu128`. A same-name index with a different URL is never overwritten. Old official PyTorch index entries are removed only when no source refers to them.
 
 Existing non-Linux source behavior is retained by adding `and sys_platform != 'linux'` to its marker. The Linux source is replaced rather than accumulated, and comments and ordering are preserved where the TOML structure permits. Applying the same verified input again is idempotent.
+
+The current Linux machine marker is also merged into `tool.uv.required-environments`. This makes uv require installable wheels for the architecture during universal lock resolution instead of discovering an unusable package only during synchronization.
 
 When a NumPy bridge failure is repaired by `numpy<2`, the requirement is added to every selected PyTorch scope that needs it:
 

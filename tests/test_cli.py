@@ -10,14 +10,23 @@ from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendCandidate,
     BackendKind,
+    CandidateAttempt,
     Channel,
     CommandOutcome,
+    FailedIndex,
+    FailedPackage,
     Operation,
     OutputFormat,
     ProbeProfile,
+    ResolutionFailure,
+    ResolutionFailureKind,
     RuntimeReport,
 )
-from uv_torch_compass.errors import ConfigurationError
+from uv_torch_compass.errors import (
+    CandidateResolutionError,
+    CommandError,
+    ConfigurationError,
+)
 from uv_torch_compass.workspace import WorkspaceContext
 
 
@@ -171,7 +180,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
         == 1
     )
     document = json.loads(capsys.readouterr().out)
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == 4
     assert document["status"] == "failed"
     assert document["exit_code"] == 1
     assert document["errors"]
@@ -277,6 +286,99 @@ def test_main_reports_operational_failures(
     captured = capsys.readouterr()
     assert status == 1
     assert expected in json.loads(captured.out)["errors"][0]
+
+
+def test_generic_command_failure_has_no_candidate_attempts(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write_project(pyproject)
+
+    class FailingApplication:
+        def __init__(self, *_arguments) -> None:
+            pass
+
+        def run(self):
+            raise CommandError("no usable PyTorch backend was found; attempted: cu121")
+
+    monkeypatch.setattr("uv_torch_compass.cli.CompassApplication", FailingApplication)
+    monkeypatch.setattr(
+        "uv_torch_compass.cli.UvCommandClient.discover",
+        lambda *_arguments, **_keywords: object(),
+    )
+
+    status = main(
+        [
+            "plan",
+            "--pyproject",
+            str(pyproject),
+            "--output-format",
+            "json",
+        ]
+    )
+
+    document = json.loads(capsys.readouterr().out)
+    assert status == 1
+    assert document["schema_version"] == 4
+    assert document["candidate_attempts"] == []
+
+
+def test_candidate_resolution_failure_reaches_json_boundary(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write_project(pyproject)
+    failure = ResolutionFailure(
+        ResolutionFailureKind.NO_COMPATIBLE_DISTRIBUTION,
+        "The required package build is unavailable from this index.",
+        FailedPackage("torch", "2.10.0", "torch==2.10.0"),
+        ("vllm>=0.25.0", "torch==2.10.0"),
+        FailedIndex(
+            "pytorch-cu121",
+            "https://download.pytorch.org/whl/cu121",
+        ),
+        "linux-x86_64",
+        ("Select a compatible vLLM version.",),
+    )
+    attempt = CandidateAttempt(
+        "cu121",
+        "install",
+        "failed",
+        failure.summary,
+        "strict",
+        failure,
+    )
+
+    class FailingApplication:
+        def __init__(self, *_arguments) -> None:
+            pass
+
+        def run(self):
+            raise CandidateResolutionError("no usable backend", (attempt,))
+
+    monkeypatch.setattr("uv_torch_compass.cli.CompassApplication", FailingApplication)
+    monkeypatch.setattr(
+        "uv_torch_compass.cli.UvCommandClient.discover",
+        lambda *_arguments, **_keywords: object(),
+    )
+
+    status = main(
+        [
+            "plan",
+            "--pyproject",
+            str(pyproject),
+            "--output-format",
+            "json",
+        ]
+    )
+
+    document = json.loads(capsys.readouterr().out)
+    diagnostic = document["candidate_attempts"][0]["failure"]
+    assert status == 1
+    assert diagnostic["package"]["name"] == "torch"
+    assert diagnostic["required_by"][0] == "vllm>=0.25.0"
+    assert diagnostic["index"]["name"] == "pytorch-cu121"
+    assert document["resolution_failure"]["packages"] == ["torch"]
 
 
 def test_main_reports_log_creation_failure(tmp_path: Path, capsys) -> None:

@@ -145,6 +145,7 @@ class UvCommandClient:
         extras: Sequence[str],
         groups: Sequence[str],
         check: bool = False,
+        dry_run: bool = False,
     ) -> CommandResult:
         """Synchronize or check exactly the selected project package and scopes."""
         arguments: list[str | Path] = [
@@ -161,6 +162,8 @@ class UvCommandClient:
         if check:
             arguments.append("--check")
             return self._heavy(arguments, cwd=project_dir)
+        if dry_run:
+            arguments.append("--dry-run")
         return self._heavy(arguments, cwd=project_dir)
 
     def run_project_python(

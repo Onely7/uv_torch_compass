@@ -40,6 +40,7 @@ _TOOL_KEYS = {
     "log-dir",
     "timeout",
     "output-format",
+    "state",
 }
 _LINK_MODES = {"clone", "copy", "hardlink", "symlink"}
 _ENV_PREFIX = "UV_TORCH_COMPASS_"
@@ -256,7 +257,10 @@ def _read_project_settings(pyproject: Path) -> dict[str, Any]:
         raise ConfigurationError(
             "unknown [tool.uv-torch-compass] keys: " + ", ".join(unknown)
         )
-    return typed_settings
+    state = typed_settings.get("state")
+    if state is not None and not isinstance(state, dict):
+        raise ConfigurationError("[tool.uv-torch-compass.state] must be a table")
+    return {key: value for key, value in typed_settings.items() if key != "state"}
 
 
 def _first(*values: str | None) -> str:

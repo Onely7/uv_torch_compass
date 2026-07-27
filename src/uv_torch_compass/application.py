@@ -33,6 +33,7 @@ from uv_torch_compass.errors import (
     ProjectUpdateError,
 )
 from uv_torch_compass.nvidia import NvidiaInspector, NvidiaSnapshot
+from uv_torch_compass.platform_requirement import RequiredEnvironment
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
@@ -207,9 +208,23 @@ class CompassApplication:
             overrides=self.options.requirement_overrides,
             backend=verified.runtime.backend,
             numpy_lt2_required=verified.numpy_lt2_required,
+            source_packages=verified.installed_pytorch,
+            required_environment=RequiredEnvironment.current_linux().marker,
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
         metadata = _metadata(python, nvidia)
+        metadata["dependency_roots"] = [
+            {"scope": item.scope.label, "requirement": str(item.requirement)}
+            for item in requirements.selected
+        ]
+        metadata["source_anchors"] = sorted(
+            verified.installed_pytorch.difference(
+                item.package
+                for item in requirements.selected
+                if item.package in {"torch", "torchvision", "torchaudio"}
+            )
+        )
+        metadata["required_environment"] = RequiredEnvironment.current_linux().marker
         warnings = (*gpu_warnings, *candidate_plan.warnings)
         if self.options.operation is Operation.PLAN:
             initial_state.require_unchanged(self.options.operation)
@@ -255,6 +270,7 @@ class CompassApplication:
         self.reporter.phase("apply", "updating and synchronizing the target project")
         lock_path = workspace.workspace_root / ".uv-torch-compass.lock"
         transaction: SafeProjectTransaction | None = None
+        environment_mutation_started = False
         with WorkspaceAdvisoryLock(lock_path):
             if self.options.pyproject.read_text(encoding="utf-8") != original:
                 raise ExternalModificationError(
@@ -272,6 +288,20 @@ class CompassApplication:
                     # Record that state so rollback can distinguish it from editor changes.
                     transaction.accept_lockfile_change()
                 _require_success(lock_result, "uv lock failed", self.reporter)
+                preflight = self.uv.sync(
+                    workspace.project_dir,
+                    python.executable,
+                    package=workspace.package,
+                    extras=self.options.extras,
+                    groups=self.options.groups,
+                    dry_run=True,
+                )
+                _require_success(
+                    preflight,
+                    "uv sync preflight failed",
+                    self.reporter,
+                )
+                environment_mutation_started = True
                 sync_result = self.uv.sync(
                     workspace.project_dir,
                     python.executable,
@@ -291,7 +321,13 @@ class CompassApplication:
                 final_compatibility = self._compatibility_for(final, nvidia)
             except BaseException as exc:
                 if transaction is not None:
-                    self._restore(workspace, python, transaction, exc)
+                    self._restore(
+                        workspace,
+                        python,
+                        transaction,
+                        exc,
+                        recover_environment=environment_mutation_started,
+                    )
                 raise
         status = (
             "success_with_warnings" if self.reporter.warning_messages else "success"
@@ -477,10 +513,14 @@ class CompassApplication:
         python: ResolvedPython,
         transaction: SafeProjectTransaction,
         original_error: BaseException,
+        *,
+        recover_environment: bool,
     ) -> None:
         self.reporter.phase("restore", "restoring project files after failure")
         try:
             transaction.restore()
+            if not recover_environment:
+                return
             if transaction.lockfile_snapshot.existed:
                 recovery = self.uv.sync(
                     workspace.project_dir,
