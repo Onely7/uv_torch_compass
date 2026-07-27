@@ -22,6 +22,7 @@ from uv_torch_compass.domain import (
     RuntimeReport,
 )
 from uv_torch_compass.errors import CommandError, ConfigurationError, ProbeError
+from uv_torch_compass.installed_metadata import read_installed_distributions
 from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.reporting import CommandReporter
 from uv_torch_compass.uv_commands import UvCommandClient
@@ -35,6 +36,7 @@ class ProbeOutcome:
     compatibility: CompatibilityDecision
     numpy_lt2_required: bool
     attempts: tuple[CandidateAttempt, ...]
+    installed_pytorch: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True)
@@ -94,6 +96,7 @@ class CandidateProbeService:
                 outcome.compatibility,
                 outcome.numpy_lt2_required,
                 tuple(attempts),
+                outcome.installed_pytorch,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CommandError(
@@ -122,9 +125,26 @@ class CandidateProbeService:
             self.reporter.warn(f"candidate {candidate.value}: installation failed")
             return None
 
-        validation = self._run_probe(venv, candidate)
+        try:
+            installed_pytorch = frozenset(
+                distribution.name
+                for distribution in read_installed_distributions(venv)
+                if distribution.name in {"torch", "torchvision", "torchaudio"}
+            )
+        except ProbeError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return None
+        if "torch" not in installed_pytorch:
+            self.reporter.warn(
+                f"candidate {candidate.value}: selected dependencies do not install torch"
+            )
+            return None
+
+        validation = self._run_probe(venv, candidate, installed_pytorch)
         if validation.returncode == 0:
-            return self._parse_success(validation.stdout, candidate, False)
+            return self._parse_success(
+                validation.stdout, candidate, False, installed_pytorch
+            )
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
             self.reporter.warn(
@@ -139,13 +159,20 @@ class CandidateProbeService:
         self.reporter.detail(repaired.stdout + repaired.stderr)
         if repaired.returncode != 0:
             return None
-        validation = self._run_probe(venv, candidate)
+        validation = self._run_probe(venv, candidate, installed_pytorch)
         self.reporter.detail(validation.stdout + validation.stderr)
         if validation.returncode != 0:
             return None
-        return self._parse_success(validation.stdout, candidate, True)
+        return self._parse_success(
+            validation.stdout, candidate, True, installed_pytorch
+        )
 
-    def _run_probe(self, venv: Path, candidate: BackendCandidate):
+    def _run_probe(
+        self,
+        venv: Path,
+        candidate: BackendCandidate,
+        installed_pytorch: frozenset[str],
+    ):
         expected = candidate.value if candidate.is_concrete else None
         arguments: list[str | Path] = [venv / "bin" / "python", self.runtime_probe]
         arguments.extend(["--probe-profile", self.probe_profile.value])
@@ -156,9 +183,9 @@ class CandidateProbeService:
             and self._compatibility_for(candidate).level is CompatibilityLevel.MINOR
         ):
             arguments.append("--require-native-architecture")
-        if self.requirements.has_package("torchvision"):
+        if "torchvision" in installed_pytorch:
             arguments.append("--validate-torchvision")
-        if self.requirements.has_package("torchaudio"):
+        if "torchaudio" in installed_pytorch:
             arguments.append("--validate-torchaudio")
         overrides = (
             {"CUDA_VISIBLE_DEVICES": self.cuda_device} if self.cuda_device else None
@@ -175,6 +202,7 @@ class CandidateProbeService:
         output: str,
         candidate: BackendCandidate,
         numpy_lt2_required: bool,
+        installed_pytorch: frozenset[str],
     ) -> ProbeOutcome | None:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
@@ -208,7 +236,13 @@ class CandidateProbeService:
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
             return None
-        return ProbeOutcome(report, compatibility, numpy_lt2_required, ())
+        return ProbeOutcome(
+            report,
+            compatibility,
+            numpy_lt2_required,
+            (),
+            installed_pytorch,
+        )
 
     def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:
         if not candidate.is_cuda:

@@ -207,6 +207,7 @@ class CompassApplication:
             overrides=self.options.requirement_overrides,
             backend=verified.runtime.backend,
             numpy_lt2_required=verified.numpy_lt2_required,
+            source_packages=verified.installed_pytorch,
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
         metadata = _metadata(python, nvidia)

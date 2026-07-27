@@ -132,7 +132,10 @@ class FakeUv:
     def install_candidate(
         self, venv: Path, requirements, candidate, *, dry_run: bool = False
     ) -> CommandResult:
-        del venv, requirements, candidate, dry_run
+        del requirements, candidate, dry_run
+        metadata = venv / "lib/python/site-packages/torch-2.7.0.dist-info/METADATA"
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        metadata.write_text("Name: torch\nVersion: 2.7.0\n", encoding="utf-8")
         return CommandResult(0, "installed", "")
 
     def install_numpy_lt2(self, venv: Path) -> CommandResult:

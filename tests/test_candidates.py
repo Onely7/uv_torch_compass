@@ -211,7 +211,10 @@ class ProbeUv:
     def install_candidate(
         self, path: Path, requirements, candidate, *, dry_run: bool = False
     ) -> CommandResult:
-        del path, requirements, candidate, dry_run
+        del requirements, candidate, dry_run
+        metadata = path / "lib/python/site-packages/torch-2.7.0.dist-info/METADATA"
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        metadata.write_text("Name: torch\nVersion: 2.7.0\n", encoding="utf-8")
         return CommandResult(self.install_codes.pop(0), "", "install failed")
 
     def install_numpy_lt2(self, path: Path) -> CommandResult:

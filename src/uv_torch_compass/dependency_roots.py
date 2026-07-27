@@ -14,6 +14,18 @@ class SelectedDependencyRoots:
     requirements: tuple[ScopedRequirement, ...]
 
     @property
+    def candidate_requirements(self) -> tuple[str, ...]:
+        """Return every selected root for complete candidate resolution."""
+        values: list[str] = []
+        seen: set[str] = set()
+        for item in self.requirements:
+            normalized = str(item.requirement)
+            if normalized not in seen:
+                seen.add(normalized)
+                values.append(normalized)
+        return tuple(values)
+
+    @property
     def legacy_probe_requirements(self) -> tuple[str, ...]:
         """Return the requirements accepted by the legacy candidate probe."""
         values: list[str] = []

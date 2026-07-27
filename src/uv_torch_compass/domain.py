@@ -212,12 +212,12 @@ class ProjectRequirements:
 
     @property
     def probe_requirements(self) -> tuple[str, ...]:
-        """Return de-duplicated requirements installed in candidate environments."""
+        """Return all selected roots installed in candidate environments."""
         # Import locally to keep the foundational domain module independent of
         # the policy object that consumes its requirement values.
         from uv_torch_compass.dependency_roots import SelectedDependencyRoots
 
-        return SelectedDependencyRoots(self.selected).legacy_probe_requirements
+        return SelectedDependencyRoots(self.selected).candidate_requirements
 
     def has_package(self, package: str) -> bool:
         """Return whether the selected scopes contain a direct package requirement."""
@@ -237,11 +237,7 @@ class ProjectRequirements:
         implementation_name: str,
         platform_implementation: str,
     ) -> ProjectRequirements:
-        """Return requirements whose markers apply to the resolved Linux runtime.
-
-        Raises:
-            ConfigurationError: If no selected PyTorch requirement applies.
-        """
+        """Return requirements whose markers apply to the resolved Linux runtime."""
         parsed_version = Version(version)
         environment = cast(dict[str, str], dict(default_environment()))
         environment.update(
@@ -262,9 +258,9 @@ class ProjectRequirements:
             if item.requirement.marker is None
             or item.requirement.marker.evaluate(environment)
         )
-        if not any(item.package in PYTORCH_PACKAGES for item in selected):
+        if not selected:
             raise ConfigurationError(
-                "no selected PyTorch requirement applies to the resolved interpreter"
+                "no selected dependency requirement applies to the resolved interpreter"
             )
         return ProjectRequirements(
             self.requires_python,

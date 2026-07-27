@@ -61,7 +61,7 @@ def test_reads_base_extra_group_and_adds_effective_torch(tmp_path: Path) -> None
     )
 
 
-def test_transitive_only_pytorch_project_is_currently_rejected(
+def test_transitive_only_pytorch_project_adds_managed_source_anchor(
     tmp_path: Path,
 ) -> None:
     pyproject = tmp_path / "pyproject.toml"
@@ -75,13 +75,28 @@ def test_transitive_only_pytorch_project_is_currently_rejected(
         """,
     )
 
-    with pytest.raises(ConfigurationError, match="no torch"):
-        read_project_requirements(
-            pyproject,
-            extras=(),
-            groups=(),
-            overrides=(),
-        )
+    requirements = read_project_requirements(
+        pyproject,
+        extras=(),
+        groups=(),
+        overrides=(),
+    )
+    content, changes = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cu129"),
+        numpy_lt2_required=False,
+        source_packages=frozenset({"torch"}),
+    )
+
+    document = tomlkit.parse(content).unwrap()
+    assert document["project"]["dependencies"] == ["vllm==0.19.1", "torch"]
+    assert document["tool"]["uv"]["sources"]["torch"]
+    assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
+        "torch"
+    ]
+    assert "added managed PyTorch source anchors: torch" in changes
 
 
 def test_render_preserves_comments_guards_old_sources_and_is_idempotent(
