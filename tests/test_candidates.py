@@ -256,7 +256,7 @@ class ProbeUv:
             "torchvision": "0.22.0",
             "torchaudio": "2.7.0",
             "vllm": "0.19.1",
-            "xgrammar": "0.2.3",
+            "xgrammar": "0.2.4",
         }
         for name in sorted(dependencies):
             source = sources.get(name, {})
@@ -449,7 +449,7 @@ def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
         reporter,
     )
 
-    with pytest.raises(CommandError, match="no usable"):
+    with pytest.raises(CommandError, match="compatible PyTorch"):
         service.find_working_candidate(
             (
                 BackendCandidate("cu128"),
@@ -463,7 +463,7 @@ def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
     assert any("valid JSON" in warning for warning in reporter.warnings)
 
 
-def test_install_failure_is_currently_reported_without_package_context(
+def test_install_failure_reports_a_resolved_build_before_the_blocker(
     tmp_path: Path,
 ) -> None:
     reporter = ProbeReporter()
@@ -476,7 +476,7 @@ def test_install_failure_is_currently_reported_without_package_context(
 
     with pytest.raises(
         CommandError,
-        match=r"no usable PyTorch backend was found; attempted: cu121",
+        match=r"compatible PyTorch builds were resolved.*attempted: cu121",
     ):
         service.find_working_candidate((BackendCandidate("cu121"),))
 
@@ -551,6 +551,40 @@ def test_lock_reanchors_transitive_pytorch_packages_before_install(
         "torchaudio": "https://download.pytorch.org/whl/cu128",
         "torchvision": "https://download.pytorch.org/whl/cu128",
     }
+
+
+def test_install_failure_uses_lock_graph_for_transitive_blocker_path(
+    tmp_path: Path,
+) -> None:
+    service = _service(
+        tmp_path,
+        ProbeUv(
+            install_codes=[1],
+            install_error=(
+                "Distribution `xgrammar==0.2.4 @ registry+https://pypi.org/simple` "
+                "can't be installed because it doesn't have a source distribution "
+                "or wheel for the current platform\n"
+                "hint: You're on Linux (`manylinux_2_39_x86_64`)"
+            ),
+        ),
+        ProbeRunner([]),
+        ProbeReporter(),
+    )
+    service.requirements = ProjectRequirements(
+        ">=3.12",
+        "",
+        (ScopedRequirement(Scope("base"), "vllm==0.19.1"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate((BackendCandidate("cu128"),))
+
+    failure = captured.value.attempts[0].failure
+    assert failure is not None
+    assert failure.dependency_paths == (("project", "vllm==0.19.1", "xgrammar==0.2.4"),)
+    assert failure.platform == "manylinux_2_39_x86_64"
 
 
 def test_install_timeout_is_preserved_as_candidate_diagnostic(

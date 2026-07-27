@@ -6,6 +6,9 @@ from typing import cast
 
 import pytest
 
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
+from uv_torch_compass.candidate_lock import CandidateLockSnapshot, LockedPackage
+from uv_torch_compass.candidate_resolution import CandidateResolution
 from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendCandidate,
@@ -71,19 +74,64 @@ def test_json_report_is_single_document_and_private(tmp_path: Path, capsys) -> N
         report_file=report_file,
     )
     reporter = CommandReporter(options, "0.1.0")
+    resolution = CandidateResolution(
+        BackendCandidate("cpu"),
+        CandidateExecutionEnvironment("3.12.12", "cpython", "linux", "x86_64"),
+        CandidateLockSnapshot(
+            "uv-torch-compass-candidate",
+            (
+                LockedPackage(
+                    "uv-torch-compass-candidate",
+                    "0",
+                    "",
+                    ("torch",),
+                ),
+                LockedPackage(
+                    "torch",
+                    "2.7.0",
+                    "https://download.pytorch.org/whl/cpu",
+                    (),
+                ),
+            ),
+        ),
+    )
     with reporter:
         reporter.phase("inspect", "https://user:secret@example.invalid/simple")
         reporter.warn("warning")
         reporter.emit_final(
-            CommandOutcome("planned", False, None, changes=("one change",)),
+            CommandOutcome(
+                "planned",
+                False,
+                None,
+                attempts=(
+                    CandidateAttempt(
+                        "cpu",
+                        "runtime",
+                        "passed",
+                        "resolved as cpu",
+                        "strict",
+                        resolution=resolution,
+                    ),
+                ),
+                changes=("one change",),
+            ),
             None,
             exit_code=0,
         )
 
     captured = capsys.readouterr()
     document = json.loads(captured.out)
+    assert document["schema_version"] == 6
     assert document["status"] == "planned"
     assert document["changes"] == ["one change"]
+    attempt = document["candidate_attempts"][0]
+    assert attempt["resolution"]["pytorch"]["torch"]["version"] == "2.7.0"
+    assert attempt["phases"] == {
+        "lock": "passed",
+        "install": "passed",
+        "runtime": "passed",
+        "framework": "not-run",
+    }
     assert "secret" not in captured.err
     assert json.loads(report_file.read_text(encoding="utf-8")) == document
     assert stat.S_IMODE(report_file.stat().st_mode) == 0o600

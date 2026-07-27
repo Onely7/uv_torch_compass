@@ -619,6 +619,8 @@ class ResolutionFailure:
     index: FailedIndex | None = None
     platform: str | None = None
     suggestions: tuple[str, ...] = ()
+    dependency_paths: tuple[tuple[str, ...], ...] = ()
+    available_wheel_platforms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

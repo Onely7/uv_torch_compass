@@ -187,7 +187,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
         == 1
     )
     document = json.loads(capsys.readouterr().out)
-    assert document["schema_version"] == 5
+    assert document["schema_version"] == 6
     assert document["status"] == "failed"
     assert document["exit_code"] == 1
     assert document["errors"]
@@ -326,7 +326,7 @@ def test_generic_command_failure_has_no_candidate_attempts(
 
     document = json.loads(capsys.readouterr().out)
     assert status == 1
-    assert document["schema_version"] == 5
+    assert document["schema_version"] == 6
     assert document["candidate_attempts"] == []
 
 
@@ -385,7 +385,7 @@ def test_candidate_resolution_failure_reaches_json_boundary(
     assert diagnostic["package"]["name"] == "torch"
     assert diagnostic["required_by"][0] == "vllm>=0.25.0"
     assert diagnostic["index"]["name"] == "pytorch-cu121"
-    assert document["resolution_failure"]["packages"] == ["torch"]
+    assert document["blocking_summary"]["common_blockers"][0]["package"] == "torch"
 
 
 def test_main_reports_log_creation_failure(tmp_path: Path, capsys) -> None:

@@ -117,7 +117,7 @@ class CandidateProbeService:
             attempts.append(
                 CandidateAttempt(
                     candidate.value,
-                    "runtime",
+                    ("framework" if outcome.framework_validation else "runtime"),
                     "passed",
                     f"resolved as {outcome.runtime.backend.value}",
                     outcome.compatibility.level.value,
@@ -137,8 +137,15 @@ class CandidateProbeService:
                 outcome.resolution,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
+        if any(attempt.resolution is not None for attempt in attempts):
+            message = (
+                "compatible PyTorch builds were resolved, but the selected "
+                "dependency graph could not be fully installed and validated"
+            )
+        else:
+            message = "no usable PyTorch backend was found"
         raise CandidateResolutionError(
-            f"no usable PyTorch backend was found; attempted: {attempted}",
+            f"{message}; attempted: {attempted}",
             tuple(attempts),
         )
 
@@ -170,10 +177,12 @@ class CandidateProbeService:
         if installed.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: installation failed")
             return CandidateProbeResult.failed(
-                interpret_uv_failure(
-                    installed.stdout + installed.stderr,
-                    candidate=candidate,
-                    dependency_roots=self.requirements.probe_requirements,
+                resolution.enrich_failure(
+                    interpret_uv_failure(
+                        installed.stdout + installed.stderr,
+                        candidate=candidate,
+                        dependency_roots=self.requirements.probe_requirements,
+                    )
                 ),
                 resolution,
                 stage="install",
