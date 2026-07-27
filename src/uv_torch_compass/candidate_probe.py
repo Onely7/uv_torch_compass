@@ -7,6 +7,9 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+
 from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
 from uv_torch_compass.candidate_lock import read_candidate_lock
 from uv_torch_compass.candidate_project import render_candidate_project
@@ -19,11 +22,16 @@ from uv_torch_compass.cuda_compatibility import (
     validate_runtime_identity,
 )
 from uv_torch_compass.domain import (
+    PYTORCH_PACKAGES,
     BackendCandidate,
     CandidateAttempt,
+    FailedIndex,
+    FailedPackage,
     FrameworkProbe,
     ProbeProfile,
     ProjectRequirements,
+    ResolutionFailure,
+    ResolutionFailureKind,
     RuntimeReport,
 )
 from uv_torch_compass.errors import (
@@ -37,10 +45,8 @@ from uv_torch_compass.framework_validation import (
     framework_validation_document,
     parse_framework_probe,
 )
-from uv_torch_compass.installed_metadata import (
-    InstalledDistribution,
-    read_installed_distributions,
-)
+from uv_torch_compass.index_url import canonical_official_pytorch_url
+from uv_torch_compass.installed_metadata import read_installed_distributions
 from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.probe_contract import (
     CandidateProbeResult,
@@ -53,7 +59,7 @@ from uv_torch_compass.resolution_diagnostics import (
     runtime_failure,
     timeout_failure,
 )
-from uv_torch_compass.source_ownership import derive_managed_source_anchors
+from uv_torch_compass.source_ownership import derive_lock_source_anchors
 from uv_torch_compass.uv_commands import UvCommandClient
 
 
@@ -144,52 +150,14 @@ class CandidateProbeService:
         )
         venv = candidate_root / "environment"
         self.reporter.info(f"testing backend candidate {candidate.value}")
+        prepared = self._resolve_candidate(candidate, candidate_root)
+        if isinstance(prepared, CandidateProbeResult):
+            return prepared
+        resolution, project_dir = prepared
         try:
-            project = render_candidate_project(
-                self.target_pyproject,
-                destination=candidate_root / "project",
-                requirements=self.requirements.probe_requirements,
-                candidate=candidate,
-                environment=self.execution_environment,
-                workspace_members=dict(self.workspace_members),
-            )
-            locked = self.uv.lock_candidate(
-                project.parent,
-                self.project_python,
-            )
-        except CommandTimeoutError:
-            return CandidateProbeResult.failed(
-                timeout_failure("dependency resolution"),
-                stage="lock",
-            )
-        except ConfigurationError as exc:
-            self.reporter.warn(f"candidate {candidate.value}: {exc}")
-            return CandidateProbeResult.failed(
-                runtime_failure("The candidate source policy could not be prepared."),
-                stage="lock",
-            )
-        self.reporter.detail(locked.stdout + locked.stderr)
-        if locked.returncode != 0:
-            self.reporter.warn(
-                f"candidate {candidate.value}: dependency resolution failed"
-            )
-            return CandidateProbeResult.failed(
-                interpret_uv_failure(
-                    locked.stdout + locked.stderr,
-                    candidate=candidate,
-                    dependency_roots=self.requirements.probe_requirements,
-                ),
-                stage="lock",
-            )
-        try:
-            resolution = CandidateResolution(
-                candidate,
-                self.execution_environment,
-                read_candidate_lock(project.parent / "uv.lock"),
-            )
             installed = self.uv.sync_locked_candidate(
                 venv,
-                project.parent,
+                project_dir,
                 self.project_python,
             )
         except CommandTimeoutError:
@@ -197,12 +165,6 @@ class CandidateProbeService:
                 timeout_failure("installation"),
                 resolution,
                 stage="install",
-            )
-        except (ConfigurationError, ProbeError) as exc:
-            self.reporter.warn(f"candidate {candidate.value}: {exc}")
-            return CandidateProbeResult.failed(
-                runtime_failure("The candidate lockfile could not be validated."),
-                stage="lock",
             )
         self.reporter.detail(installed.stdout + installed.stderr)
         if installed.returncode != 0:
@@ -252,7 +214,6 @@ class CandidateProbeService:
                 candidate,
                 False,
                 contract,
-                installed_distributions,
                 resolution,
             )
             return self._finalize_candidate(venv, candidate, outcome, resolution)
@@ -295,10 +256,124 @@ class CandidateProbeService:
             candidate,
             True,
             contract,
-            installed_distributions,
             resolution,
         )
         return self._finalize_candidate(venv, candidate, outcome, resolution)
+
+    def _resolve_candidate(
+        self,
+        candidate: BackendCandidate,
+        candidate_root: Path,
+    ) -> tuple[CandidateResolution, Path] | CandidateProbeResult:
+        requirements = list(self.requirements.probe_requirements)
+        anchored = {
+            package
+            for raw_requirement in requirements
+            if (package := _requirement_name(raw_requirement)) in PYTORCH_PACKAGES
+        }
+        anchored.add("torch")
+        for iteration in range(len(PYTORCH_PACKAGES) + 1):
+            try:
+                project = render_candidate_project(
+                    self.target_pyproject,
+                    destination=candidate_root / f"project-{iteration}",
+                    requirements=requirements,
+                    candidate=candidate,
+                    environment=self.execution_environment,
+                    workspace_members=dict(self.workspace_members),
+                )
+                locked = self.uv.lock_candidate(project.parent, self.project_python)
+            except CommandTimeoutError:
+                return CandidateProbeResult.failed(
+                    timeout_failure("dependency resolution"),
+                    stage="lock",
+                )
+            except ConfigurationError as exc:
+                self.reporter.warn(f"candidate {candidate.value}: {exc}")
+                return CandidateProbeResult.failed(
+                    runtime_failure(
+                        "The candidate source policy could not be prepared."
+                    ),
+                    stage="lock",
+                )
+            self.reporter.detail(locked.stdout + locked.stderr)
+            if locked.returncode != 0:
+                failure = interpret_uv_failure(
+                    locked.stdout + locked.stderr,
+                    candidate=candidate,
+                    dependency_roots=self.requirements.probe_requirements,
+                )
+                missing_anchor = (
+                    failure.package.name
+                    if failure.package is not None
+                    and failure.package.name in PYTORCH_PACKAGES
+                    and failure.package.name not in anchored
+                    else None
+                )
+                if missing_anchor is not None:
+                    anchored.add(missing_anchor)
+                    requirements.append(missing_anchor)
+                    self.reporter.info(
+                        f"candidate {candidate.value}: anchoring transitive "
+                        f"{missing_anchor} to {candidate.index_name}"
+                    )
+                    continue
+                self.reporter.warn(
+                    f"candidate {candidate.value}: dependency resolution failed"
+                )
+                return CandidateProbeResult.failed(failure, stage="lock")
+            try:
+                resolution = CandidateResolution(
+                    candidate,
+                    self.execution_environment,
+                    read_candidate_lock(project.parent / "uv.lock"),
+                )
+            except ProbeError as exc:
+                self.reporter.warn(f"candidate {candidate.value}: {exc}")
+                return CandidateProbeResult.failed(
+                    runtime_failure("The candidate lockfile could not be validated."),
+                    stage="lock",
+                )
+            mismatched = tuple(
+                package
+                for package in resolution.pytorch_packages
+                if canonical_official_pytorch_url(package.source_url)
+                != candidate.index_url
+            )
+            new_anchors = tuple(
+                package.name for package in mismatched if package.name not in anchored
+            )
+            if new_anchors:
+                for package in new_anchors:
+                    anchored.add(package)
+                    requirements.append(package)
+                    self.reporter.info(
+                        f"candidate {candidate.value}: anchoring transitive "
+                        f"{package} to {candidate.index_name}"
+                    )
+                continue
+            if mismatched:
+                package = mismatched[0]
+                failure = ResolutionFailure(
+                    ResolutionFailureKind.DEPENDENCY_CONFLICT,
+                    "A PyTorch package resolved from an unexpected package index.",
+                    FailedPackage(package.name, package.version, package.name),
+                    index=FailedIndex(candidate.index_name, candidate.index_url),
+                    platform=self.execution_environment.platform_label,
+                    suggestions=(
+                        "Remove conflicting source or override rules for this package.",
+                    ),
+                )
+                return CandidateProbeResult.failed(
+                    failure,
+                    resolution,
+                    stage="lock",
+                )
+            return resolution, project.parent
+        return CandidateProbeResult.failed(
+            runtime_failure("Transitive PyTorch source anchoring did not converge."),
+            stage="lock",
+        )
 
     def _finalize_candidate(
         self,
@@ -414,7 +489,6 @@ class CandidateProbeService:
         candidate: BackendCandidate,
         numpy_lt2_required: bool,
         contract: ProbeContract,
-        installed_distributions: tuple[InstalledDistribution, ...],
         resolution: CandidateResolution,
     ) -> ProbeOutcome | None:
         try:
@@ -456,10 +530,7 @@ class CandidateProbeService:
             numpy_lt2_required,
             (),
             contract.installed_pytorch,
-            derive_managed_source_anchors(
-                installed_distributions,
-                self.requirements,
-            ),
+            derive_lock_source_anchors(resolution.lock, self.requirements),
             (),
             resolution,
         )
@@ -478,3 +549,10 @@ class CandidateProbeService:
                 "CUDA backend requires a visible NVIDIA GPU",
             )
         return self.nvidia.compatibility_for(candidate.value, self.compatibility_policy)
+
+
+def _requirement_name(raw_value: str) -> str:
+    try:
+        return str(canonicalize_name(Requirement(raw_value).name))
+    except InvalidRequirement:
+        return ""

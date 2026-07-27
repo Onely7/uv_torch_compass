@@ -3,6 +3,13 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+
+try:
+    import tomllib  # ty: ignore[unresolved-import]
+except ModuleNotFoundError:  # pragma: no cover - exercised by Python 3.10 CI.
+    import tomli as tomllib  # ty: ignore[unresolved-import]
 
 from uv_torch_compass.backend_selection import build_candidate_plan
 from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
@@ -216,19 +223,60 @@ class ProbeUv:
         python: Path,
     ) -> CommandResult:
         del python
+        document = tomllib.loads(
+            (project_dir / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        dependencies = {
+            str(canonicalize_name(Requirement(raw).name))
+            for raw in document["project"]["dependencies"]
+        }
+        if "vllm" in dependencies:
+            dependencies.update({"torch", "torchvision", "torchaudio", "xgrammar"})
+        sources = document["tool"]["uv"]["sources"]
+        indexes = {
+            item["name"]: item["url"] for item in document["tool"]["uv"]["index"]
+        }
+        root_dependencies = sorted(
+            {
+                str(canonicalize_name(Requirement(raw).name))
+                for raw in document["project"]["dependencies"]
+            }
+        )
+        lines = [
+            "version = 1",
+            "[[package]]",
+            'name = "uv-torch-compass-candidate"',
+            'version = "0"',
+            "dependencies = ["
+            + ", ".join(f'{{ name = "{name}" }}' for name in root_dependencies)
+            + "]",
+        ]
+        versions = {
+            "torch": "2.7.0",
+            "torchvision": "0.22.0",
+            "torchaudio": "2.7.0",
+            "vllm": "0.19.1",
+            "xgrammar": "0.2.3",
+        }
+        for name in sorted(dependencies):
+            source = sources.get(name, {})
+            registry = indexes.get(source.get("index"), "https://pypi.org/simple")
+            lines.extend(
+                [
+                    "[[package]]",
+                    f'name = "{name}"',
+                    f'version = "{versions.get(name, "1.0.0")}"',
+                    f'source = {{ registry = "{registry}" }}',
+                ]
+            )
+            if name == "vllm":
+                lines.append(
+                    "dependencies = ["
+                    '{ name = "torch" }, { name = "torchvision" }, '
+                    '{ name = "torchaudio" }, { name = "xgrammar" }]'
+                )
         (project_dir / "uv.lock").write_text(
-            """
-version = 1
-[[package]]
-name = "uv-torch-compass-candidate"
-version = "0"
-dependencies = [{ name = "torch" }]
-[[package]]
-name = "torch"
-version = "2.7.0"
-source = { registry = "https://download.pytorch.org/whl/cpu" }
-""".strip()
-            + "\n",
+            "\n".join(lines) + "\n",
             encoding="utf-8",
         )
         return CommandResult(0, "", "")
@@ -472,6 +520,37 @@ def test_install_failure_preserves_structured_resolution_context(
     assert failure.package.name == "torch"
     assert failure.index is not None
     assert failure.index.name == "pytorch-cu121"
+
+
+def test_lock_reanchors_transitive_pytorch_packages_before_install(
+    tmp_path: Path,
+) -> None:
+    service = _service(
+        tmp_path,
+        ProbeUv(install_codes=[1]),
+        ProbeRunner([]),
+        ProbeReporter(),
+    )
+    service.requirements = ProjectRequirements(
+        ">=3.12",
+        "",
+        (ScopedRequirement(Scope("base"), "vllm==0.19.1"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate((BackendCandidate("cu128"),))
+
+    resolution = captured.value.attempts[0].resolution
+    assert resolution is not None
+    assert {
+        package.name: package.source_url for package in resolution.pytorch_packages
+    } == {
+        "torch": "https://download.pytorch.org/whl/cu128",
+        "torchaudio": "https://download.pytorch.org/whl/cu128",
+        "torchvision": "https://download.pytorch.org/whl/cu128",
+    }
 
 
 def test_install_timeout_is_preserved_as_candidate_diagnostic(

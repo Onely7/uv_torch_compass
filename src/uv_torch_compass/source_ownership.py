@@ -9,6 +9,7 @@ from packaging.markers import UndefinedEnvironmentName
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
+from uv_torch_compass.candidate_lock import CandidateLockSnapshot
 from uv_torch_compass.domain import PYTORCH_PACKAGES, ProjectRequirements, Scope
 from uv_torch_compass.installed_metadata import InstalledDistribution
 
@@ -19,6 +20,47 @@ class ManagedSourceAnchor:
 
     package: str
     scope: Scope
+
+
+def derive_lock_source_anchors(
+    snapshot: CandidateLockSnapshot,
+    requirements: ProjectRequirements,
+) -> tuple[ManagedSourceAnchor, ...]:
+    """Map locked transitive PyTorch packages back to selected root scopes.
+
+    The lock graph is available before installation, so it can make PyTorch
+    sources authoritative even when a later non-PyTorch wheel blocks sync.
+    """
+    direct_pytorch = {
+        item.package
+        for item in requirements.selected
+        if item.package in PYTORCH_PACKAGES
+    }
+    root_scopes: dict[str, set[Scope]] = {}
+    for item in requirements.selected:
+        root_scopes.setdefault(item.package, set()).add(item.scope)
+    fallback_scopes = {item.scope for item in requirements.selected}
+    anchors: list[ManagedSourceAnchor] = []
+    for package in snapshot.pytorch_packages:
+        if package.name in direct_pytorch:
+            continue
+        owners: set[Scope] = set()
+        for path in snapshot.dependency_paths(package.name):
+            if len(path) >= 3:
+                owners.update(root_scopes.get(path[1], ()))
+        scopes = owners or fallback_scopes
+        base = next((scope for scope in scopes if scope.kind == "base"), None)
+        selected_scopes = (
+            (base,)
+            if base is not None
+            else tuple(sorted(scopes, key=lambda scope: scope.label))
+        )
+        anchors.extend(
+            ManagedSourceAnchor(package.name, scope)
+            for scope in selected_scopes
+            if scope is not None
+        )
+    return tuple(anchors)
 
 
 def derive_managed_source_anchors(
