@@ -18,6 +18,7 @@ from uv_torch_compass.cuda_compatibility import (
 from uv_torch_compass.domain import (
     BackendCandidate,
     CandidateAttempt,
+    FrameworkProbe,
     ProbeProfile,
     ProjectRequirements,
     RuntimeReport,
@@ -27,6 +28,11 @@ from uv_torch_compass.errors import (
     CommandTimeoutError,
     ConfigurationError,
     ProbeError,
+)
+from uv_torch_compass.framework_validation import (
+    FrameworkValidation,
+    framework_validation_document,
+    parse_framework_probe,
 )
 from uv_torch_compass.installed_metadata import (
     InstalledDistribution,
@@ -65,6 +71,7 @@ class CandidateProbeService:
     probe_profile: ProbeProfile
     target_pyproject: Path
     workspace_members: tuple[tuple[str, Path], ...] = ()
+    framework_probes: tuple[FrameworkProbe, ...] = ()
 
     def find_working_candidate(
         self,
@@ -118,6 +125,7 @@ class CandidateProbeService:
                 tuple(attempts),
                 outcome.installed_pytorch,
                 outcome.source_anchors,
+                outcome.framework_validation,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CandidateResolutionError(
@@ -197,13 +205,7 @@ class CandidateProbeService:
                 contract,
                 installed_distributions,
             )
-            return (
-                CandidateProbeResult.passed(outcome)
-                if outcome is not None
-                else CandidateProbeResult.failed(
-                    runtime_failure("The candidate runtime validation failed.")
-                )
-            )
+            return self._finalize_candidate(venv, candidate, outcome)
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
             self.reporter.warn(
@@ -239,13 +241,70 @@ class CandidateProbeService:
             contract,
             installed_distributions,
         )
-        return (
-            CandidateProbeResult.passed(outcome)
-            if outcome is not None
-            else CandidateProbeResult.failed(
+        return self._finalize_candidate(venv, candidate, outcome)
+
+    def _finalize_candidate(
+        self,
+        venv: Path,
+        candidate: BackendCandidate,
+        outcome: ProbeOutcome | None,
+    ) -> CandidateProbeResult:
+        if outcome is None:
+            return CandidateProbeResult.failed(
                 runtime_failure("The candidate runtime validation failed.")
             )
+        framework_probes = self._framework_probes(venv, candidate)
+        if isinstance(framework_probes, CandidateProbeResult):
+            return framework_probes
+        return CandidateProbeResult.passed(
+            ProbeOutcome(
+                outcome.runtime,
+                outcome.compatibility,
+                outcome.numpy_lt2_required,
+                outcome.attempts,
+                outcome.installed_pytorch,
+                outcome.source_anchors,
+                framework_probes,
+            )
         )
+
+    def _framework_probes(
+        self,
+        venv: Path,
+        candidate: BackendCandidate,
+    ) -> tuple[FrameworkValidation, ...] | CandidateProbeResult:
+        requested = self.framework_probes
+        if not requested:
+            return ()
+        arguments: list[str | Path] = [
+            venv / "bin" / "python",
+            Path(__file__).with_name("framework_probe.py").resolve(),
+            "--expected-backend",
+            candidate.value,
+        ]
+        for framework in requested:
+            arguments.extend(["--framework", framework.value])
+        environment, _ = sanitized_environment(os.environ)
+        try:
+            result = self.runner.run(
+                arguments,
+                env=environment,
+                timeout_seconds=self.uv.diagnostic_timeout_seconds,
+            )
+        except CommandTimeoutError:
+            return CandidateProbeResult.failed(timeout_failure("framework validation"))
+        self.reporter.detail(result.stdout + result.stderr)
+        try:
+            validations = parse_framework_probe(result.stdout, requested)
+        except ProbeError as exc:
+            self.reporter.warn(f"candidate {candidate.value}: {exc}")
+            return CandidateProbeResult.failed(runtime_failure(str(exc)))
+        if result.returncode != 0:
+            return CandidateProbeResult.failed(
+                runtime_failure("The candidate framework validation failed.")
+            )
+        self.reporter.detail(str(framework_validation_document(validations)))
+        return validations
 
     def _run_probe(
         self,

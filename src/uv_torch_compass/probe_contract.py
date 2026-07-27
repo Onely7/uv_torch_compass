@@ -11,6 +11,7 @@ from uv_torch_compass.domain import (
     ResolutionFailure,
     RuntimeReport,
 )
+from uv_torch_compass.framework_validation import FrameworkValidation
 from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
 
@@ -50,6 +51,7 @@ class ProbeOutcome:
     attempts: tuple[CandidateAttempt, ...]
     installed_pytorch: frozenset[str] = frozenset()
     source_anchors: tuple[ManagedSourceAnchor, ...] = ()
+    framework_validation: tuple[FrameworkValidation, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

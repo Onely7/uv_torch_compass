@@ -42,3 +42,12 @@ def test_rejects_incomplete_installed_metadata(tmp_path: Path) -> None:
 
     with pytest.raises(ProbeError, match="incomplete"):
         read_installed_distributions(tmp_path)
+
+
+def test_rejects_oversized_installed_metadata(tmp_path: Path) -> None:
+    metadata = tmp_path / "lib/python/site-packages/huge.dist-info/METADATA"
+    metadata.parent.mkdir(parents=True)
+    metadata.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+
+    with pytest.raises(ProbeError, match="size limit"):
+        read_installed_distributions(tmp_path)

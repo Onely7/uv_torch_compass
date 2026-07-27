@@ -11,6 +11,7 @@ from packaging.markers import InvalidMarker, Marker, default_environment
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 from tomlkit.exceptions import ParseError
 from tomlkit.items import AoT
 
@@ -28,6 +29,7 @@ from uv_torch_compass.domain import (
     ScopedRequirement,
 )
 from uv_torch_compass.errors import ConfigurationError, ProjectUpdateError
+from uv_torch_compass.index_url import canonical_official_pytorch_url
 from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
 _OFFICIAL_INDEX_PREFIX = "https://download.pytorch.org/whl/"
@@ -320,17 +322,20 @@ def read_configured_backend(
         )
     index_name = next(iter(selected_names))
     index_url = index_urls.get(index_name)
-    if not isinstance(index_url, str) or not index_url.startswith(
-        _OFFICIAL_INDEX_PREFIX
-    ):
+    canonical_url = (
+        canonical_official_pytorch_url(index_url)
+        if isinstance(index_url, str)
+        else None
+    )
+    if canonical_url is None:
         raise ConfigurationError(
             f"index {index_name!r} is not an official PyTorch index"
         )
-    path = index_url.removeprefix(_OFFICIAL_INDEX_PREFIX).strip("/")
+    path = canonical_url.removeprefix(_OFFICIAL_INDEX_PREFIX)
     channel = Channel.NIGHTLY if path.startswith("nightly/") else Channel.STABLE
     backend = path.removeprefix("nightly/")
     candidate = BackendCandidate(backend, channel)
-    if candidate.index_name != index_name or candidate.index_url != index_url:
+    if candidate.index_name != index_name or candidate.index_url != canonical_url:
         raise ConfigurationError(
             f"index {index_name!r} does not match its official URL {index_url!r}"
         )
@@ -686,20 +691,43 @@ def _ensure_numpy_lt2(
         )
         if not applies:
             continue
-        if any(
-            spec.operator in {">", ">=", "~=", "==", "==="}
-            and spec.version.lstrip("=").startswith("2")
-            for spec in requirement.specifier
-        ):
+        if _numpy_specifier_excludes_all_lt2(requirement.specifier):
             raise ProjectUpdateError(
                 f"numpy requirement in {scope.label} conflicts with numpy<2"
             )
-        if any(
-            spec.operator == "<" and spec.version == "2"
-            for spec in requirement.specifier
-        ):
+        if _numpy_specifier_guarantees_lt2(requirement.specifier):
             return
     values.append("numpy<2; sys_platform == 'linux'")
+
+
+def _numpy_specifier_excludes_all_lt2(specifiers: SpecifierSet) -> bool:
+    for specifier in specifiers:
+        raw = specifier.version.rstrip(".*")
+        try:
+            version = Version(raw)
+        except InvalidVersion:
+            continue
+        if specifier.operator in {">", ">="} and version >= Version("2"):
+            return True
+        if specifier.operator in {"==", "===", "~="} and version >= Version("2"):
+            return True
+    return False
+
+
+def _numpy_specifier_guarantees_lt2(specifiers: SpecifierSet) -> bool:
+    for specifier in specifiers:
+        raw = specifier.version.rstrip(".*")
+        try:
+            version = Version(raw)
+        except InvalidVersion:
+            continue
+        if specifier.operator == "<" and version <= Version("2"):
+            return True
+        if specifier.operator == "<=" and version < Version("2"):
+            return True
+        if specifier.operator in {"==", "===", "~="} and version < Version("2"):
+            return True
+    return False
 
 
 def _ensure_table(parent: Any, key: str) -> Any:
@@ -803,10 +831,16 @@ def _ensure_verified_index(indexes: AoT, backend: BackendCandidate) -> None:
         if entry.get("name") != backend.index_name:
             continue
         existing_url = entry.get("url")
-        if existing_url != backend.index_url:
+        canonical_url = (
+            canonical_official_pytorch_url(existing_url)
+            if isinstance(existing_url, str)
+            else None
+        )
+        if canonical_url != backend.index_url:
             raise ProjectUpdateError(
                 f"index {backend.index_name!r} already uses a non-matching URL"
             )
+        entry["url"] = canonical_url
         entry["explicit"] = True
         return
     entry = tomlkit.table()
@@ -827,7 +861,7 @@ def _remove_unreferenced_official_indexes(
         if (
             isinstance(name, str)
             and isinstance(url, str)
-            and url.startswith(_OFFICIAL_INDEX_PREFIX)
+            and canonical_official_pytorch_url(url) is not None
             and name != selected_name
             and name not in referenced
         ):

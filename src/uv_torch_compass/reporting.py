@@ -120,7 +120,12 @@ class CommandReporter:
         exit_code: int,
         error: str = "",
     ) -> None:
-        """Emit the final text or JSON result and optional report artifact."""
+        """Persist an optional report before emitting the final terminal result.
+
+        Raises:
+            ReportError: If report persistence fails. A completed apply remains
+                applied because report I/O is outside the project transaction.
+        """
         document = _redact_document(
             _result_document(
                 self.options,
@@ -133,18 +138,34 @@ class CommandReporter:
                 reporter_warnings=tuple(self.warning_messages),
             )
         )
+        operation_state = document["operation_state"]
+        operation_state["applied"] = outcome.applied
+        operation_state["report_written"] = False
+        if self.options.report_file is not None:
+            operation_state["report_written"] = True
+            serialized_report = json.dumps(document, indent=2, sort_keys=True) + "\n"
+            try:
+                atomic_write_private(self.options.report_file, serialized_report)
+            except ProjectUpdateError as exc:
+                operation_state["report_written"] = False
+                message = f"could not write report {self.options.report_file}: {exc}"
+                failure_document = dict(document)
+                failure_document["status"] = "failed"
+                failure_document["exit_code"] = 1
+                failure_document["errors"] = [
+                    *document.get("errors", []),
+                    message,
+                ]
+                raise ReportError(
+                    message,
+                    applied=outcome.applied,
+                    document=failure_document,
+                ) from exc
         serialized = json.dumps(document, indent=2, sort_keys=True) + "\n"
         if self.options.output_format is OutputFormat.JSON:
             print(serialized, end="", file=sys.stdout, flush=True)
         else:
             self._emit_text_summary(document)
-        if self.options.report_file is not None:
-            try:
-                atomic_write_private(self.options.report_file, serialized)
-            except ProjectUpdateError as exc:
-                raise ReportError(
-                    f"could not write report {self.options.report_file}: {exc}"
-                ) from exc
 
     def _emit(self, level: str, message: str, *, force_stderr: bool = False) -> None:
         clean = redact(message)
@@ -253,7 +274,7 @@ def _result_document(
                 "reason": outcome.compatibility.reason,
             }
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -268,6 +289,7 @@ def _result_document(
             "channel": options.channel.value,
             "cuda_compatibility": options.cuda_compatibility.value,
             "probe_profile": options.probe_profile.value,
+            "framework_probes": [probe.value for probe in options.framework_probes],
             "extras": list(options.extras),
             "groups": list(options.groups),
             "cuda_device": options.cuda_device.value if options.cuda_device else None,
@@ -284,7 +306,11 @@ def _result_document(
             }
             for attempt in outcome.attempts
         ],
-        "resolution_failure": _aggregate_resolution_failure(outcome),
+        "resolution_failure": (
+            _aggregate_resolution_failure(outcome)
+            if outcome.status == "failed"
+            else None
+        ),
         "selected_backend": selected_backend,
         "selected_index": selected_index,
         "selected_gpu": selected_gpu,
@@ -301,6 +327,14 @@ def _result_document(
         "dependency_roots": outcome.metadata.get("dependency_roots", []),
         "source_anchors": outcome.metadata.get("source_anchors", []),
         "required_environment": outcome.metadata.get("required_environment", ""),
+        "probe_contract": outcome.metadata.get("probe_contract", {}),
+        "framework_validation": outcome.metadata.get("framework_validation", []),
+        "operation_state": outcome.metadata.get(
+            "operation_state",
+            {"applied": outcome.applied, "report_written": False},
+        ),
+        "environment_policy": outcome.metadata.get("environment_policy", {}),
+        "candidate_failure_summary": _aggregate_resolution_failure(outcome),
         "validation": runtime_document,
         "changes": list(outcome.changes),
         "backups": [str(path) for path in outcome.backups],

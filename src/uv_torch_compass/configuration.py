@@ -19,6 +19,7 @@ from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
 from uv_torch_compass.domain import (
     BackendRequest,
     Channel,
+    FrameworkProbe,
     GpuDevice,
     Operation,
     OutputFormat,
@@ -36,6 +37,7 @@ _TOOL_KEYS = {
     "cuda-device",
     "cuda-compatibility",
     "probe-profile",
+    "framework-probes",
     "link-mode",
     "log-dir",
     "timeout",
@@ -124,6 +126,21 @@ def resolve_options(
         project_settings,
         default="standard",
     )
+    framework_probe_values = _list_setting(
+        "framework-probes",
+        getattr(namespace, "framework_probes", None),
+        environ.get(f"{_ENV_PREFIX}FRAMEWORK_PROBES"),
+        project_settings,
+    )
+    try:
+        framework_probes = tuple(
+            FrameworkProbe(value) for value in framework_probe_values
+        )
+    except ValueError as exc:
+        raise ConfigurationError(
+            "framework-probes must contain only: "
+            + ", ".join(item.value for item in FrameworkProbe)
+        ) from exc
     output_format = _enum_setting(
         OutputFormat,
         "output-format",
@@ -233,6 +250,7 @@ def resolve_options(
         report_file=(
             _resolve_path(report_file_text, project_dir) if report_file_text else None
         ),
+        framework_probes=framework_probes,
     )
 
 

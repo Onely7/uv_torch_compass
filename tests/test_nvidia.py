@@ -25,11 +25,11 @@ class FakeRunner:
 
     def run(self, arguments, *, cwd=None, env=None, timeout_seconds=None):
         del cwd, env, timeout_seconds
-        if "--query-gpu=index,uuid,name,driver_version" in arguments:
+        if "--query-gpu=index,uuid,name,driver_version,memory.free" in arguments:
             return CommandResult(
                 self.query_code,
-                "0, GPU-AAA, First GPU, 570.124.06\n"
-                "1, GPU-BBB, Second GPU, 570.124.06\n",
+                "0, GPU-AAA, First GPU, 570.124.06, 1024\n"
+                "1, GPU-BBB, Second GPU, 570.124.06, 8192\n",
                 "query failed" if self.query_code else "",
             )
         return CommandResult(
@@ -43,9 +43,12 @@ def test_inspector_selects_index_or_uuid_and_filters_cuda() -> None:
     inspector = NvidiaInspector(Path("/usr/bin/nvidia-smi"), FakeRunner())
     by_index = inspector.inspect("1")
     by_uuid = inspector.inspect("GPU-AAA")
+    automatic = inspector.inspect(None)
 
     assert by_index.selected.name == "Second GPU"
     assert by_uuid.selected.index == "0"
+    assert automatic.selected.index == "1"
+    assert automatic.selected.memory_free_mib == 8192
     assert (
         by_uuid.compatibility_for("cu128", CompatibilityPolicy.STRICT).level
         is CompatibilityLevel.STRICT

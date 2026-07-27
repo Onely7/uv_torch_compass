@@ -55,6 +55,12 @@ class ProbeProfile(str, Enum):
     COMPILE = "compile"
 
 
+class FrameworkProbe(str, Enum):
+    """Identify an opt-in framework integration check."""
+
+    VLLM = "vllm"
+
+
 class BackendKind(str, Enum):
     """Select automatic, CPU-only, CUDA-only, or a concrete CUDA policy."""
 
@@ -313,6 +319,7 @@ class RunOptions:
     timeout_seconds: int
     output_format: OutputFormat
     report_file: Path | None
+    framework_probes: tuple[FrameworkProbe, ...] = ()
 
     def __post_init__(self) -> None:
         """Enforce options that must be valid before infrastructure starts."""

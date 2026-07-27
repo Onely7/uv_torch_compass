@@ -52,6 +52,18 @@ class ExternalModificationError(ProjectUpdateError):
 class ReportError(CompassError):
     """Indicate that a log or machine-readable report could not be written."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        applied: bool = False,
+        document: dict[str, object] | None = None,
+    ) -> None:
+        """Retain terminal state when report persistence fails after an apply."""
+        super().__init__(message)
+        self.applied = applied
+        self.document = document
+
 
 class TerminationRequested(CompassError):
     """Indicate that SIGTERM requested rollback and command termination."""

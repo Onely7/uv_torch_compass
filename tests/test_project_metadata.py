@@ -302,6 +302,66 @@ def test_nonofficial_same_name_index_is_not_overwritten(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize("requirement", ["numpy>=2", "numpy>=3", "numpy==2.*"])
+def test_numpy_repair_rejects_requirements_without_a_lt2_solution(
+    tmp_path: Path,
+    requirement: str,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        f"""
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["torch", "{requirement}"]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    ).for_interpreter("3.12.1", "cpython", "CPython")
+
+    with pytest.raises(ProjectUpdateError, match="conflicts with numpy<2"):
+        render_project_configuration(
+            pyproject,
+            requirements=requirements,
+            overrides=(),
+            backend=BackendCandidate("cpu"),
+            numpy_lt2_required=True,
+        )
+
+
+def test_numpy_repair_uses_the_resolved_interpreter_marker_environment(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = [
+          "torch",
+          "numpy>=2; python_version < '3.12'",
+        ]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    ).for_interpreter("3.12.1", "cpython", "CPython")
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cpu"),
+        numpy_lt2_required=True,
+    )
+
+    assert "numpy<2; sys_platform == 'linux'" in content
+
+
 def test_unknown_scope_fails_before_render(tmp_path: Path) -> None:
     pyproject = tmp_path / "pyproject.toml"
     _write(

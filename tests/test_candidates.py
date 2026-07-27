@@ -12,6 +12,7 @@ from uv_torch_compass.domain import (
     BackendCandidate,
     BackendRequest,
     Channel,
+    FrameworkProbe,
     ProbeProfile,
     ProjectRequirements,
     Scope,
@@ -300,6 +301,42 @@ def test_probe_retries_numpy_and_records_success(tmp_path: Path) -> None:
     assert outcome.numpy_lt2_required
     assert outcome.attempts[0].status == "passed"
     assert "retrying" in reporter.warnings[0]
+
+
+def test_probe_runs_requested_framework_contract(tmp_path: Path) -> None:
+    framework_output = json.dumps(
+        {
+            "schema_version": 1,
+            "results": [
+                {
+                    "framework": "vllm",
+                    "status": "PASS",
+                    "version": "0.19.1",
+                    "import_test": "PASS",
+                    "native_extension_test": "PASS",
+                    "platform_test": "PASS",
+                    "platform": "CudaPlatform",
+                    "error": "",
+                }
+            ],
+        }
+    )
+    service = _service(
+        tmp_path,
+        ProbeUv(),
+        ProbeRunner(
+            [
+                CommandResult(0, _report("cpu"), ""),
+                CommandResult(0, framework_output, ""),
+            ]
+        ),
+        ProbeReporter(),
+    )
+    service.framework_probes = (FrameworkProbe.VLLM,)
+
+    outcome = service.find_working_candidate((BackendCandidate("cpu"),))
+
+    assert outcome.framework_validation[0].framework is FrameworkProbe.VLLM
 
 
 def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:

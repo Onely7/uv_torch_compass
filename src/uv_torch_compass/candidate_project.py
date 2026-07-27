@@ -15,6 +15,7 @@ from tomlkit.items import AoT
 
 from uv_torch_compass.domain import PYTORCH_PACKAGES, BackendCandidate, Channel
 from uv_torch_compass.errors import ConfigurationError
+from uv_torch_compass.index_url import canonical_official_pytorch_url
 
 _COPIED_UV_KEYS = {
     "allow-insecure-host",
@@ -167,10 +168,17 @@ def _add_candidate_index(indexes: AoT, candidate: BackendCandidate) -> None:
     for index in indexes:
         if index.get("name") != candidate.index_name:
             continue
-        if index.get("url") != candidate.index_url:
+        existing_url = index.get("url")
+        canonical_url = (
+            canonical_official_pytorch_url(existing_url)
+            if isinstance(existing_url, str)
+            else None
+        )
+        if canonical_url != candidate.index_url:
             raise ConfigurationError(
                 f"index {candidate.index_name!r} already uses a non-official URL"
             )
+        index["url"] = canonical_url
         index["explicit"] = True
         return
     table = tomlkit.table()

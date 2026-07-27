@@ -5,6 +5,7 @@ from uv_torch_compass.cuda_compatibility import (
     CompatibilityPolicy,
     CudaRuntimeVersion,
     NvidiaDriverVersion,
+    compatibility_catalog_metadata,
     decide_compatibility,
     known_cuda_backends,
     validate_runtime_identity,
@@ -96,6 +97,7 @@ def test_cuda_value_objects_validate_and_normalize() -> None:
     assert str(runtime) == "12.9"
     assert str(NvidiaDriverVersion.parse("550.100")) == "550.100"
     assert known_cuda_backends()[0] == "cu130"
+    assert compatibility_catalog_metadata()["reviewed"] == "2026-07-28"
     with pytest.raises(ConfigurationError):
         CudaRuntimeVersion.from_backend("auto")
     with pytest.raises(ConfigurationError):
