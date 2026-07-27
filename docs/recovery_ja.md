@@ -20,7 +20,7 @@ backup は成功後も残ります。既存の backup がある場合は数値 s
 
 ## 自動 rollback
 
-backup 作成後に lock、sync、最終 probe、timeout、SIGINT、SIGTERM のいずれかが失敗すると、次の順で処理します。
+lock 後、`apply` は最初に `uv sync --locked --dry-run` を実行します。事前検査に失敗した場合は、環境がまだ変わっていないため、ファイルだけを復元して環境復旧は行いません。実際の同期開始後に sync、最終 probe、timeout、SIGINT、SIGTERM のいずれかが失敗すると、次の順で処理します。
 
 1. 中断された子 process group を復旧前に停止する
 2. `pyproject.toml` と以前の `uv.lock` を、書きかけを見せない一括置換で復元する
@@ -76,6 +76,7 @@ log には phase、マスク済み subprocess 出力、package version、ロー�
 | compile probe の失敗 | `--probe-profile standard` で再実行し、通常の CUDA 動作と任意の Inductor／Triton 経路を切り分ける |
 | 利用できる backend がない | 候補の理由、version 条件、network/index、disk 容量、GPU runtime error を確認する |
 | `uv lock` の失敗 | 選択していない scope や別 workspace member を含む uv の resolver 説明を読む |
+| `uv sync preflight failed` と利用可能な wheel がない旨の表示 | uv が示す package と platform を確認する。現在の Linux architecture は `tool.uv.required-environments` に記録されるため、互換 version があれば uv が lock 時に選択できる |
 | 環境が同期されていない | 意図した `apply` を実行するか、`uv sync --locked --check` の出力を調べる |
 | 最終 runtime 検証の失敗 | 同期後 project で一時候補の結果を再現できていない。rollback の結果を確認する |
 | plan/check 中にファイルが変わった | editor や別の依存更新 process が終わってから再実行する |

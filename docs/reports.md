@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `2` and includes these top-level fields:
+The schema version is `3` and includes these top-level fields:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "operation": "plan",
   "status": "planned",
   "exit_code": 0,
@@ -50,6 +50,9 @@ The schema version is `2` and includes these top-level fields:
   "selected_index": "https://download.pytorch.org/whl/cu124",
   "selected_gpu": {},
   "resolved_packages": {},
+  "dependency_roots": [],
+  "source_anchors": [],
+  "required_environment": "sys_platform == 'linux' and platform_machine == 'x86_64'",
   "validation": {},
   "changes": [],
   "backups": [],

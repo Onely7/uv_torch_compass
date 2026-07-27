@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout には最後の JSON object 一つだけを出します。進捗と警告は stderr へ送るため、stdout の redirect から解析可能な文書を得られます。
 
-schema version は `2` で、次の top-level field を含みます。
+schema version は `3` で、次の top-level field を含みます。
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "operation": "plan",
   "status": "planned",
   "exit_code": 0,
@@ -50,6 +50,9 @@ schema version は `2` で、次の top-level field を含みます。
   "selected_index": "https://download.pytorch.org/whl/cu124",
   "selected_gpu": {},
   "resolved_packages": {},
+  "dependency_roots": [],
+  "source_anchors": [],
+  "required_environment": "sys_platform == 'linux' and platform_machine == 'x86_64'",
   "validation": {},
   "changes": [],
   "backups": [],

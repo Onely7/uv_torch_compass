@@ -8,7 +8,7 @@ An index is a package download location. PyTorch publishes separate official ind
 
 ## Quick start
 
-You need Linux, a recent [uv](https://docs.astral.sh/uv/), internet access, and Python 3.10–3.14. The target `pyproject.toml` must contain `torch`, `torchvision`, or `torchaudio` in base dependencies or in a selected extra or dependency group.
+You need Linux, a recent [uv](https://docs.astral.sh/uv/), internet access, and Python 3.10–3.14. PyTorch may be declared directly or introduced by another selected package such as `vllm`.
 
 For a minimal project:
 
@@ -19,6 +19,14 @@ version = "0.1.0"
 requires-python = ">=3.10,<3.15"
 dependencies = ["torch>=2.5"]
 ```
+
+For a framework that depends on PyTorch, keep its real dependency in the project:
+
+```toml
+dependencies = ["vllm==0.19.1"]
+```
+
+The candidate environment resolves the complete selected dependency graph. If `vllm` requires a particular `torch`, `torchvision`, or `torchaudio` version, that constraint participates in backend selection. The applied configuration adds only the direct source anchors needed for uv's explicit PyTorch index, records those anchors as tool-managed state, and preserves the framework requirement.
 
 From the target project, run a version published on PyPI to verify a candidate and preview the change:
 
@@ -71,6 +79,7 @@ uv-torch-compass plan --probe-profile compile
 
 - `plan` installs and tests candidates in temporary environments but does not change the target `pyproject.toml`, `uv.lock`, or project environment.
 - `apply` creates timestamped backups and treats a workspace member's `pyproject.toml` and the shared root `uv.lock` as one transaction.
+- Before changing the project environment, `apply` locks the complete graph and performs a locked sync dry run. It also records the current Linux architecture as a required uv environment, so unavailable wheels fail before installation starts.
 - Writes use same-directory temporary files and atomic replacement. A workspace lock prevents two `apply` processes from updating together.
 - Lock, sync, final validation, timeout, SIGINT, and SIGTERM failures trigger file rollback and an environment recovery attempt.
 - Logs and JSON reports redact common credential forms and are created with private file permissions.

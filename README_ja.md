@@ -8,7 +8,7 @@ index はパッケージの取得先です。PyTorch は CPU 版と NVIDIA CUDA 
 
 ## クイックスタート
 
-Linux、新しい [uv](https://docs.astral.sh/uv/)、インターネット接続、Python 3.10–3.14 が必要です。対象 `pyproject.toml` の基本依存、または選択する extra・依存グループに `torch`、`torchvision`、`torchaudio` のいずれかを含めます。
+Linux、新しい [uv](https://docs.astral.sh/uv/)、インターネット接続、Python 3.10–3.14 が必要です。PyTorch は直接指定しても、`vllm` のような別の選択済み package から導入しても構いません。
 
 最小構成は次のとおりです。
 
@@ -19,6 +19,14 @@ version = "0.1.0"
 requires-python = ">=3.10,<3.15"
 dependencies = ["torch>=2.5"]
 ```
+
+PyTorch に依存する framework を使う場合は、実際に使う依存だけを記述できます。
+
+```toml
+dependencies = ["vllm==0.19.1"]
+```
+
+候補環境では、選択した依存グラフ全体を解決します。`vllm` が特定の `torch`、`torchvision`、`torchaudio` version を要求する場合、その制約を backend 選択にも反映します。適用時には、uv の明示的な PyTorch index に必要な直接依存だけを source anchor として補い、ツールが追加したものとして記録します。元の framework 依存は維持されます。
 
 対象プロジェクトで、PyPI に公開された版を使い、まず候補を検証して変更案を確認します。
 
@@ -71,6 +79,7 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 
 - `plan` は一時環境へ候補をインストールして検証しますが、対象の `pyproject.toml`、`uv.lock`、プロジェクト環境を変更しません。
 - `apply` は日時付きバックアップを作り、workspace member の `pyproject.toml` と root の共有 `uv.lock` を一つの更新単位として扱います。
+- project 環境を変更する前に、依存グラフ全体を lock し、locked sync の dry run を行います。現在の Linux architecture も uv の必須環境として記録するため、利用できない wheel はインストール開始前に検出されます。
 - 同じディレクトリの一時ファイルを使い、書きかけを見せずに一括置換します。workspace lock により、二つの `apply` が同時に更新することも防ぎます。
 - lock、sync、最終検証、timeout、SIGINT、SIGTERM の失敗時は、ファイルを復元し、環境の復旧も試みます。
 - ログと JSON report は一般的な認証情報をマスクし、所有者だけが読める権限で作ります。

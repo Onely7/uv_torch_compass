@@ -20,7 +20,7 @@ Backups remain after success. A numeric suffix prevents an existing backup from 
 
 ## Automatic rollback
 
-After backups are created, a lock, sync, final probe, timeout, SIGINT, or SIGTERM failure starts this sequence:
+After locking, `apply` first runs `uv sync --locked --dry-run`. A preflight failure restores the files but does not run environment recovery because the environment has not been changed. If actual synchronization has started, a sync, final probe, timeout, SIGINT, or SIGTERM failure starts this sequence:
 
 1. stop an interrupted child process group before recovery;
 2. restore `pyproject.toml` and the previous `uv.lock` with atomic replacement;
@@ -76,6 +76,7 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | compile probe failed | Re-run with `--probe-profile standard` to separate normal CUDA operation from the optional Inductor/Triton path. |
 | no usable backend | Inspect candidate reasons, version constraints, network/index access, disk space, and GPU runtime errors. |
 | `uv lock` failure | Read uv's resolver explanation, including unselected scopes and other workspace members. |
+| `uv sync preflight failed` and a package has no wheel | Inspect the package and platform in uv's message. The tool records the current Linux architecture in `tool.uv.required-environments`, allowing uv to choose a compatible version when one exists. |
 | environment is not synchronized | Run the intended `apply`, or inspect `uv sync --locked --check` output. |
 | final runtime validation failure | The synchronized project did not reproduce the temporary candidate result; rollback should have started. |
 | changed while plan/check was running | Retry after the editor or other dependency process has finished. |

@@ -26,7 +26,9 @@ flowchart TD
     Policy[Compare each concrete CUDA build with<br/>the driver, CUDA maximum, and local catalog]
     Candidates[Keep allowed candidates newest first<br/>Record rejected candidates and reasons]
     CPU[Use the official CPU candidate]
-    Temporary[Install one candidate in a temporary environment]
+    Roots[Resolve all selected dependency roots<br/>including frameworks such as vllm]
+    Temporary[Install the complete graph<br/>in a temporary environment]
+    Metadata[Read installed package metadata<br/>Find transitive PyTorch packages]
     Runtime[Verify resolved CUDA components<br/>Run tensor and library checks]
     CandidateResult{Did the candidate pass?}
     More{Is another candidate available?}
@@ -36,7 +38,9 @@ flowchart TD
     Planned([planned<br/>No project changes])
 
     Backup[Back up pyproject.toml and uv.lock]
-    Update[Update pyproject.toml<br/>Lock and synchronize with uv]
+    Update[Add managed source anchors<br/>and lock the complete graph]
+    Preflight{Does locked sync dry run succeed?}
+    Sync[Synchronize the project environment]
     FinalCheck{Did the final runtime check pass?}
     Success([success or success_with_warnings<br/>Keep the backups])
     Restore[Restore the original files<br/>Attempt to recover the environment]
@@ -50,16 +54,18 @@ flowchart TD
     CheckResult -- No --> Failed
 
     Command -- plan or apply --> Driver
-    Driver -- Yes --> Policy --> Candidates --> Temporary
-    Driver -- No --> CPU --> Temporary
-    Temporary --> Runtime --> CandidateResult
+    Driver -- Yes --> Policy --> Candidates --> Roots
+    Driver -- No --> CPU --> Roots
+    Roots --> Temporary --> Metadata --> Runtime --> CandidateResult
     CandidateResult -- Yes --> Selected --> Action
     CandidateResult -- No --> More
-    More -- Yes --> Temporary
+    More -- Yes --> Roots
     More -- No --> Failed
 
     Action -- plan --> Plan --> Planned
-    Action -- apply --> Backup --> Update --> FinalCheck
+    Action -- apply --> Backup --> Update --> Preflight
+    Preflight -- No --> Restore
+    Preflight -- Yes --> Sync --> FinalCheck
     FinalCheck -- Yes --> Success
     FinalCheck -- No --> Restore --> Failed
 ```
@@ -129,7 +135,7 @@ When CUDA is required, missing NVIDIA information is an error. With `auto`, an a
 
 ## Runtime probe
 
-Each candidate is installed in a new temporary virtual environment with only the selected PyTorch requirements and any necessary NumPy constraint. The probe returns JSON that the parent process validates again.
+Each candidate is installed in a new temporary virtual environment from every dependency root in the selected base, extras, and groups. This lets constraints from packages such as `vllm` determine the compatible PyTorch versions. Installed `dist-info` metadata is inspected without importing third-party packages; discovered PyTorch packages are then runtime-tested. The probe returns JSON that the parent process validates again.
 
 | Check | Required behavior |
 | --- | --- |
@@ -165,7 +171,7 @@ The command reports meaningful phases rather than a fixed step count:
 1. `inspect`: resolve workspace, requirements, Python, and host information;
 2. `resolve`: build the deterministic candidate sequence;
 3. `verify`: install and execute candidates in temporary environments;
-4. `apply`: back up, edit, lock, sync, and validate the final environment;
+4. `apply`: back up, edit, lock, dry-run sync, synchronize, and validate the final environment;
 5. `restore`: restore files and attempt environment recovery after a failure.
 
 `plan` stops after generating a verified zero-context diff. `check` skips candidate search and validates the already recorded state. Both invalidate their result if `pyproject.toml` or `uv.lock` changes during the command.

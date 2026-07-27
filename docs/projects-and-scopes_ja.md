@@ -38,11 +38,17 @@ training = [
 uv-torch-compass plan --extra vision --group training
 ```
 
-存在しない依存範囲、未対応の group 要素、include の循環、不正な requirement、PyTorch の矛盾する完全一致 version、適用可能な PyTorch がない選択は、対象ファイルを変更する前に拒否します。
+存在しない依存範囲、未対応の group 要素、include の循環、不正な requirement、PyTorch の矛盾する完全一致 version は、対象ファイルを変更する前に拒否します。
 
 選択範囲が実質的に `torchvision` または `torchaudio` を含み、`torch` を含まない場合は、同じ場所の変更案へ `torch` を追加します。include-group の展開も考慮するため、この例では `training` 自身に `torch` が入ります。
 
-PEP 508 marker が、解決済み Linux Python の version と implementation に一致しない requirement は probe から外します。適用可能な PyTorch requirement が一つ以上残る必要があります。
+PEP 508 marker が、解決済み Linux Python の version と implementation に一致しない requirement は probe から外します。依存ルートが一つ以上残り、解決後のグラフに `torch` が含まれる必要があります。
+
+## 別の package から導入される PyTorch
+
+候補環境では、直接の PyTorch 宣言だけでなく、選択した依存範囲の依存ルートをすべて解決します。たとえば、対象 release が PyTorch への依存を宣言していれば、`dependencies = ["vllm==0.19.1"]` だけで検証できます。
+
+uv が推移依存を明示的な index へ振り分けるには、`[tool.uv.sources]` のキーに対応する直接依存が必要です。そのため検証後に、必要な `torch`、`torchvision`、`torchaudio` を基本依存へ version なしの source anchor として補います。version は元の framework の制約と lock によって決まります。追加した anchor は `[tool.uv-torch-compass.state]` に記録し、ツールが所有する宣言だけを後から削除できるようにします。
 
 選択していない extra と group の宣言は書き換えません。ただし uv が lockfile 全体を解決するときには影響するため、project 内の別の非互換性で `uv lock` が失敗し、rollback する場合があります。
 
@@ -68,6 +74,8 @@ explicit = true
 CUDA と nightly の名前は `pytorch-cu128`、`pytorch-nightly-cu128` の形式です。同じ名前で別 URL の index があっても上書きしません。古い公式 PyTorch index は、どの source からも参照されていない場合だけ削除します。
 
 既存の Linux 以外の source には marker と `and sys_platform != 'linux'` を組み合わせ、元の動作を保ちます。Linux source は追加し続けず置換し、TOML の構造が許す範囲でコメントと順序を保持します。同じ検証結果を再適用しても内容は変わりません。
+
+現在の Linux machine marker も `tool.uv.required-environments` へ既存値を保ったまま追加します。これにより、同期時まで利用不能な wheel を見逃さず、universal lock の解決中に現在の architecture へインストール可能な version を uv に要求できます。
 
 NumPy bridge の失敗が `numpy<2` で直った場合は、必要な各 PyTorch 依存範囲へ次のような条件を追加します。
 
