@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.0](https://github.com/Onely7/uv_torch_compass/compare/v0.2.0...v0.3.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* support transitive PyTorch resolution and actionable diagnostics ([#9](https://github.com/Onely7/uv_torch_compass/issues/9))
+
+### Features
+
+* support transitive PyTorch resolution and actionable diagnostics ([#9](https://github.com/Onely7/uv_torch_compass/issues/9)) ([17b2e24](https://github.com/Onely7/uv_torch_compass/commit/17b2e24a5aaefa61f9e0fad93db597ce77bda0b4))
+
 ## [0.2.0](https://github.com/Onely7/uv_torch_compass/compare/v0.1.1...v0.2.0) (2026-07-23)
 
 
