@@ -209,6 +209,7 @@ class ProjectRequirements:
     selected: tuple[ScopedRequirement, ...]
     all_pytorch: tuple[ScopedRequirement, ...]
     selected_scopes: tuple[Scope, ...]
+    marker_environment: tuple[tuple[str, str], ...] = ()
 
     @property
     def probe_requirements(self) -> tuple[str, ...]:
@@ -268,7 +269,16 @@ class ProjectRequirements:
             selected,
             self.all_pytorch,
             self.selected_scopes,
+            tuple(sorted(environment.items())),
         )
+
+    def environment(self) -> dict[str, str]:
+        """Return the resolved marker environment, or a Linux default."""
+        if self.marker_environment:
+            return dict(self.marker_environment)
+        environment = cast(dict[str, str], dict(default_environment()))
+        environment.update({"sys_platform": "linux", "platform_system": "Linux"})
+        return environment
 
 
 @dataclass(frozen=True, slots=True)

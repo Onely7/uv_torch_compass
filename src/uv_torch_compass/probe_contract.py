@@ -11,6 +11,7 @@ from uv_torch_compass.domain import (
     ResolutionFailure,
     RuntimeReport,
 )
+from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class ProbeOutcome:
     numpy_lt2_required: bool
     attempts: tuple[CandidateAttempt, ...]
     installed_pytorch: frozenset[str] = frozenset()
+    source_anchors: tuple[ManagedSourceAnchor, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

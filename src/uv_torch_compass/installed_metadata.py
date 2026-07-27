@@ -18,6 +18,7 @@ class InstalledDistribution:
 
     name: str
     version: str
+    requires_dist: tuple[str, ...] = ()
 
 
 def read_installed_distributions(venv: Path) -> tuple[InstalledDistribution, ...]:
@@ -47,5 +48,9 @@ def read_installed_distributions(venv: Path) -> tuple[InstalledDistribution, ...
         if not raw_name or not raw_version:
             raise ProbeError(f"incomplete installed metadata at {resolved}")
         name = canonicalize_name(raw_name)
-        distributions[name] = InstalledDistribution(name, raw_version)
+        distributions[name] = InstalledDistribution(
+            name,
+            raw_version,
+            tuple(message.get_all("Requires-Dist", [])),
+        )
     return tuple(distributions[name] for name in sorted(distributions))

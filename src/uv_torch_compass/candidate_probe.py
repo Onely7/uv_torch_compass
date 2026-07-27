@@ -27,7 +27,10 @@ from uv_torch_compass.errors import (
     ConfigurationError,
     ProbeError,
 )
-from uv_torch_compass.installed_metadata import read_installed_distributions
+from uv_torch_compass.installed_metadata import (
+    InstalledDistribution,
+    read_installed_distributions,
+)
 from uv_torch_compass.nvidia import NvidiaSnapshot
 from uv_torch_compass.probe_contract import (
     CandidateProbeResult,
@@ -40,6 +43,7 @@ from uv_torch_compass.resolution_diagnostics import (
     runtime_failure,
     timeout_failure,
 )
+from uv_torch_compass.source_ownership import derive_managed_source_anchors
 from uv_torch_compass.uv_commands import UvCommandClient
 
 
@@ -110,6 +114,7 @@ class CandidateProbeService:
                 outcome.numpy_lt2_required,
                 tuple(attempts),
                 outcome.installed_pytorch,
+                outcome.source_anchors,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         raise CandidateResolutionError(
@@ -156,9 +161,10 @@ class CandidateProbeService:
             )
 
         try:
+            installed_distributions = read_installed_distributions(venv)
             installed_pytorch = frozenset(
                 distribution.name
-                for distribution in read_installed_distributions(venv)
+                for distribution in installed_distributions
                 if distribution.name in {"torch", "torchvision", "torchaudio"}
             )
         except ProbeError as exc:
@@ -180,7 +186,13 @@ class CandidateProbeService:
         )
         validation = self._run_probe(venv, candidate, contract)
         if validation.returncode == 0:
-            outcome = self._parse_success(validation.stdout, candidate, False, contract)
+            outcome = self._parse_success(
+                validation.stdout,
+                candidate,
+                False,
+                contract,
+                installed_distributions,
+            )
             return (
                 CandidateProbeResult.passed(outcome)
                 if outcome is not None
@@ -216,7 +228,13 @@ class CandidateProbeService:
                     "The candidate failed after the NumPy compatibility repair."
                 )
             )
-        outcome = self._parse_success(validation.stdout, candidate, True, contract)
+        outcome = self._parse_success(
+            validation.stdout,
+            candidate,
+            True,
+            contract,
+            installed_distributions,
+        )
         return (
             CandidateProbeResult.passed(outcome)
             if outcome is not None
@@ -261,6 +279,7 @@ class CandidateProbeService:
         candidate: BackendCandidate,
         numpy_lt2_required: bool,
         contract: ProbeContract,
+        installed_distributions: tuple[InstalledDistribution, ...],
     ) -> ProbeOutcome | None:
         try:
             report = RuntimeReport.from_output(output, channel=candidate.channel)
@@ -301,6 +320,10 @@ class CandidateProbeService:
             numpy_lt2_required,
             (),
             contract.installed_pytorch,
+            derive_managed_source_anchors(
+                installed_distributions,
+                self.requirements,
+            ),
         )
 
     def _compatibility_for(self, candidate: BackendCandidate) -> CompatibilityDecision:

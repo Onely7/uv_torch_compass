@@ -183,7 +183,7 @@ class CompassApplication:
             overrides=self.options.requirement_overrides,
             backend=verified.runtime.backend,
             numpy_lt2_required=verified.numpy_lt2_required,
-            source_packages=verified.installed_pytorch,
+            managed_anchors=verified.source_anchors,
             required_environment=RequiredEnvironment.current_linux().marker,
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
@@ -192,13 +192,10 @@ class CompassApplication:
             {"scope": item.scope.label, "requirement": str(item.requirement)}
             for item in requirements.selected
         ]
-        metadata["source_anchors"] = sorted(
-            verified.installed_pytorch.difference(
-                item.package
-                for item in requirements.selected
-                if item.package in {"torch", "torchvision", "torchaudio"}
-            )
-        )
+        metadata["source_anchors"] = [
+            {"package": anchor.package, "scope": anchor.scope.label}
+            for anchor in verified.source_anchors
+        ]
         metadata["required_environment"] = RequiredEnvironment.current_linux().marker
         warnings = (*gpu_warnings, *candidate_plan.warnings)
         if self.options.operation is Operation.PLAN:

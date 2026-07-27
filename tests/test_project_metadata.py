@@ -4,13 +4,14 @@ from textwrap import dedent
 import pytest
 import tomlkit
 
-from uv_torch_compass.domain import BackendCandidate, Channel
+from uv_torch_compass.domain import BackendCandidate, Channel, Scope
 from uv_torch_compass.errors import ConfigurationError, ProjectUpdateError
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
     render_project_configuration,
 )
+from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
 
 def _write(path: Path, content: str) -> None:
@@ -87,7 +88,7 @@ def test_transitive_only_pytorch_project_adds_managed_source_anchor(
         overrides=(),
         backend=BackendCandidate("cu129"),
         numpy_lt2_required=False,
-        source_packages=frozenset({"torch"}),
+        managed_anchors=(ManagedSourceAnchor("torch", Scope("base")),),
         required_environment=(
             "sys_platform == 'linux' and platform_machine == 'x86_64'"
         ),
@@ -100,9 +101,9 @@ def test_transitive_only_pytorch_project_adds_managed_source_anchor(
         "sys_platform == 'linux' and platform_machine == 'x86_64'"
     ]
     assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
-        "torch"
+        {"package": "torch", "scope": "base"}
     ]
-    assert "added managed PyTorch source anchors: torch" in changes
+    assert "added managed PyTorch source anchors: torch in base" in changes
 
 
 def test_managed_source_anchors_are_idempotent_and_replaceable(
@@ -131,13 +132,52 @@ def test_managed_source_anchors_are_idempotent_and_replaceable(
         overrides=(),
         backend=BackendCandidate("cpu"),
         numpy_lt2_required=False,
-        source_packages=frozenset({"torchvision"}),
+        managed_anchors=(ManagedSourceAnchor("torchvision", Scope("base")),),
     )
 
     document = tomlkit.parse(content).unwrap()
     assert document["project"]["dependencies"] == ["vllm", "torchvision"]
     assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
-        "torchvision"
+        {"package": "torchvision", "scope": "base"}
+    ]
+
+
+def test_managed_source_anchor_stays_in_its_optional_scope(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = []
+
+        [project.optional-dependencies]
+        serve = ["vllm"]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=("serve",), groups=(), overrides=()
+    )
+
+    content, _ = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cu129"),
+        numpy_lt2_required=True,
+        managed_anchors=(ManagedSourceAnchor("torch", Scope("extra", "serve")),),
+    )
+
+    document = tomlkit.parse(content).unwrap()
+    assert document["project"]["dependencies"] == []
+    assert document["project"]["optional-dependencies"]["serve"] == [
+        "vllm",
+        "torch",
+        "numpy<2; sys_platform == 'linux'",
+    ]
+    assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
+        {"package": "torch", "scope": "extra:serve"}
     ]
 
 
@@ -166,7 +206,7 @@ def test_rejects_invalid_managed_source_anchor_state(tmp_path: Path) -> None:
             overrides=(),
             backend=BackendCandidate("cpu"),
             numpy_lt2_required=False,
-            source_packages=frozenset({"torch"}),
+            managed_anchors=(ManagedSourceAnchor("torch", Scope("base")),),
         )
 
 
