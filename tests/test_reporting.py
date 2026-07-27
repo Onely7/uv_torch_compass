@@ -199,6 +199,35 @@ def test_text_report_explains_failed_candidate(tmp_path: Path, capsys) -> None:
     assert "Suggestion: Select a compatible vLLM version." in captured.out
 
 
+def test_text_report_limits_long_skipped_candidate_lists(
+    tmp_path: Path, capsys
+) -> None:
+    reporter = CommandReporter(_text_options(tmp_path), "0.1.0")
+    attempts = tuple(
+        CandidateAttempt(
+            f"cu{index}",
+            "policy",
+            "skipped",
+            f"candidate {index} is unsupported",
+            "unsupported",
+        )
+        for index in range(7)
+    )
+
+    with reporter:
+        reporter.emit_final(
+            CommandOutcome("failed", False, None, attempts=attempts),
+            None,
+            exit_code=1,
+            error="no usable backend",
+        )
+
+    captured = capsys.readouterr()
+    assert "cu4: candidate 4 is unsupported" in captured.out
+    assert "cu5: candidate 5 is unsupported" not in captured.out
+    assert "... and 2 more" in captured.out
+
+
 def test_reporter_requires_context_and_wraps_atomic_write_failure(
     tmp_path: Path, monkeypatch
 ) -> None:

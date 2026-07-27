@@ -53,6 +53,7 @@ _ALLOWED_UV_ENVIRONMENT = {
     "UV_OFFLINE",
     "UV_SYSTEM_CERTS",
 }
+_MAX_CAPTURE_CHARACTERS = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,7 +138,11 @@ class SubprocessRunner:
             _stop_process_group(process)
             raise
 
-        return CommandResult(process.returncode, stdout, stderr)
+        return CommandResult(
+            process.returncode,
+            _bounded_output(stdout),
+            _bounded_output(stderr),
+        )
 
 
 def resolve_executable(name: str) -> Path:
@@ -179,6 +184,19 @@ def _environment_variable_is_controlled(key: str) -> bool:
     if not key.startswith("UV_"):
         return False
     return key not in _ALLOWED_UV_ENVIRONMENT and not key.startswith("UV_INDEX_")
+
+
+def _bounded_output(value: str) -> str:
+    if len(value) <= _MAX_CAPTURE_CHARACTERS:
+        return value
+    head_size = _MAX_CAPTURE_CHARACTERS // 4
+    tail_size = _MAX_CAPTURE_CHARACTERS - head_size
+    omitted = len(value) - _MAX_CAPTURE_CHARACTERS
+    return (
+        value[:head_size]
+        + f"\n... <{omitted} output characters omitted> ...\n"
+        + value[-tail_size:]
+    )
 
 
 def _stop_process_group(process: subprocess.Popen[str]) -> None:

@@ -201,9 +201,16 @@ class CommandReporter:
         ]
         if skipped:
             print("Skipped candidates:", file=sys.stdout)
-            for attempt in skipped:
+            displayed = skipped[:5]
+            for attempt in displayed:
                 print(
                     f"  - {attempt['backend']}: {attempt['reason']}",
+                    file=sys.stdout,
+                )
+            if len(skipped) > len(displayed):
+                print(
+                    f"  - ... and {len(skipped) - len(displayed)} more "
+                    "(see the JSON report or private log)",
                     file=sys.stdout,
                 )
         failed = [
