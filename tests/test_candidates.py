@@ -421,3 +421,42 @@ def test_probe_does_not_retry_non_numpy_or_failed_repair(tmp_path: Path) -> None
     )
     with pytest.raises(CommandError):
         failed_repair.find_working_candidate((BackendCandidate("cpu"),))
+
+
+def test_transitive_torchaudio_currently_conflicts_with_direct_expectations(
+    tmp_path: Path,
+) -> None:
+    class TransitiveAudioUv(ProbeUv):
+        def install_candidate(
+            self, path: Path, requirements, candidate, *, dry_run: bool = False
+        ) -> CommandResult:
+            result = super().install_candidate(
+                path, requirements, candidate, dry_run=dry_run
+            )
+            metadata = (
+                path / "lib/python/site-packages/torchaudio-2.7.0.dist-info/METADATA"
+            )
+            metadata.parent.mkdir(parents=True, exist_ok=True)
+            metadata.write_text("Name: torchaudio\nVersion: 2.7.0\n", encoding="utf-8")
+            return result
+
+    report = json.loads(_report())
+    report["torchaudio_version"] = "2.7.0"
+    report["torchaudio_test"] = "PASS"
+    service = _service(
+        tmp_path,
+        TransitiveAudioUv(),
+        ProbeRunner([CommandResult(0, json.dumps(report), "")]),
+        ProbeReporter(),
+    )
+    scope = Scope("base")
+    service.requirements = ProjectRequirements(
+        ">=3.10",
+        "",
+        (ScopedRequirement(scope, "vllm==0.19.1"),),
+        (),
+        (scope,),
+    )
+
+    with pytest.raises(CandidateResolutionError):
+        service.find_working_candidate((BackendCandidate("cpu"),))

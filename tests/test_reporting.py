@@ -1,5 +1,6 @@
 import json
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,23 @@ def test_reporter_requires_context_and_wraps_atomic_write_failure(
             None,
             exit_code=1,
         )
+
+
+def test_report_file_currently_may_replace_the_target_pyproject(
+    tmp_path: Path,
+) -> None:
+    options = _text_options(tmp_path)
+    reporter = CommandReporter(
+        replace(options, report_file=options.pyproject),
+        "0.1.0",
+    )
+
+    with reporter:
+        reporter.emit_final(
+            CommandOutcome("planned", False, None),
+            None,
+            exit_code=0,
+        )
+
+    document = json.loads(options.pyproject.read_text(encoding="utf-8"))
+    assert document["status"] == "planned"

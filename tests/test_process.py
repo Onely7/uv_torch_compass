@@ -60,6 +60,15 @@ def test_environment_filter_removes_control_values_but_keeps_connectivity() -> N
     assert environment["UV_LINK_MODE"] == "copy"
 
 
+def test_project_environment_currently_survives_environment_sanitization() -> None:
+    environment, removed = sanitized_environment(
+        {"PATH": "/bin", "UV_PROJECT_ENVIRONMENT": "/project-environment"}
+    )
+
+    assert environment["UV_PROJECT_ENVIRONMENT"] == "/project-environment"
+    assert "UV_PROJECT_ENVIRONMENT" not in removed
+
+
 def test_runner_stops_process_group_after_termination_request(monkeypatch) -> None:
     stopped: list[object] = []
 

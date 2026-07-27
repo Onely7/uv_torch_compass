@@ -348,3 +348,26 @@ def test_overlapping_exact_versions_are_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError, match="conflicting exact"):
         read_project_requirements(pyproject, extras=(), groups=(), overrides=())
+
+
+def test_exact_override_currently_conflicts_with_the_original_requirement(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["torch==2.9.0"]
+        """,
+    )
+
+    with pytest.raises(ConfigurationError, match="conflicting exact"):
+        read_project_requirements(
+            pyproject,
+            extras=(),
+            groups=(),
+            overrides=("torch==2.10.0",),
+        )
