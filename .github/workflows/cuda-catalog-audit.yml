@@ -1,0 +1,56 @@
+name: CUDA compatibility catalog audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 18 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Check catalog provenance and review age
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: src
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          python-version: "3.12"
+          enable-cache: false
+      - name: Verify the NVIDIA source remains reachable
+        run: |
+          source_url="$(
+            uv run --no-project --with packaging python - <<'PY'
+          from uv_torch_compass.cuda_compatibility import CATALOG_SOURCE_URL
+          print(CATALOG_SOURCE_URL)
+          PY
+          )"
+          curl --fail --silent --show-error --location \
+            --max-time 30 --output /dev/null "$source_url"
+      - name: Require a recent human catalog review
+        run: |
+          uv run --no-project --with packaging python - <<'PY'
+          from datetime import date
+          from uv_torch_compass.cuda_compatibility import CATALOG_REVIEWED_DATE
+
+          reviewed = date.fromisoformat(CATALOG_REVIEWED_DATE)
+          age = (date.today() - reviewed).days
+          if age > 120:
+              raise SystemExit(
+                  f"CUDA compatibility catalog review is {age} days old; "
+                  "compare it with NVIDIA release notes and update the review date."
+              )
+          print(f"catalog review age: {age} days")
+          PY
