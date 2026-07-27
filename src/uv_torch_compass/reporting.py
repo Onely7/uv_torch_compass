@@ -263,7 +263,7 @@ def _result_document(
                 "reason": outcome.compatibility.reason,
             }
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -306,6 +306,9 @@ def _result_document(
             if runtime is not None
             else {}
         ),
+        "dependency_roots": outcome.metadata.get("dependency_roots", []),
+        "source_anchors": outcome.metadata.get("source_anchors", []),
+        "required_environment": outcome.metadata.get("required_environment", ""),
         "validation": runtime_document,
         "changes": list(outcome.changes),
         "backups": [str(path) for path in outcome.backups],

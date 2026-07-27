@@ -161,7 +161,7 @@ def _add_selection_options(parser: argparse.ArgumentParser) -> None:
 def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
     if getattr(namespace, "output_format", None) == "json":
         document = {
-            "schema_version": 2,
+            "schema_version": 3,
             "operation": getattr(namespace, "operation", ""),
             "status": "failed",
             "exit_code": 1,
@@ -175,6 +175,9 @@ def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
             "selected_index": "",
             "selected_gpu": None,
             "resolved_packages": {},
+            "dependency_roots": [],
+            "source_anchors": [],
+            "required_environment": "",
             "validation": {},
             "changes": [],
             "backups": [],

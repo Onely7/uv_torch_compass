@@ -213,6 +213,18 @@ class CompassApplication:
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
         metadata = _metadata(python, nvidia)
+        metadata["dependency_roots"] = [
+            {"scope": item.scope.label, "requirement": str(item.requirement)}
+            for item in requirements.selected
+        ]
+        metadata["source_anchors"] = sorted(
+            verified.installed_pytorch.difference(
+                item.package
+                for item in requirements.selected
+                if item.package in {"torch", "torchvision", "torchaudio"}
+            )
+        )
+        metadata["required_environment"] = RequiredEnvironment.current_linux().marker
         warnings = (*gpu_warnings, *candidate_plan.warnings)
         if self.options.operation is Operation.PLAN:
             initial_state.require_unchanged(self.options.operation)
