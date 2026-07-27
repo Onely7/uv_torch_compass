@@ -61,6 +61,29 @@ def test_reads_base_extra_group_and_adds_effective_torch(tmp_path: Path) -> None
     )
 
 
+def test_transitive_only_pytorch_project_is_currently_rejected(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["vllm==0.19.1"]
+        """,
+    )
+
+    with pytest.raises(ConfigurationError, match="no torch"):
+        read_project_requirements(
+            pyproject,
+            extras=(),
+            groups=(),
+            overrides=(),
+        )
+
+
 def test_render_preserves_comments_guards_old_sources_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
