@@ -258,6 +258,7 @@ class CompassApplication:
         self.reporter.phase("apply", "updating and synchronizing the target project")
         lock_path = workspace.workspace_root / ".uv-torch-compass.lock"
         transaction: SafeProjectTransaction | None = None
+        environment_mutation_started = False
         with WorkspaceAdvisoryLock(lock_path):
             if self.options.pyproject.read_text(encoding="utf-8") != original:
                 raise ExternalModificationError(
@@ -275,6 +276,20 @@ class CompassApplication:
                     # Record that state so rollback can distinguish it from editor changes.
                     transaction.accept_lockfile_change()
                 _require_success(lock_result, "uv lock failed", self.reporter)
+                preflight = self.uv.sync(
+                    workspace.project_dir,
+                    python.executable,
+                    package=workspace.package,
+                    extras=self.options.extras,
+                    groups=self.options.groups,
+                    dry_run=True,
+                )
+                _require_success(
+                    preflight,
+                    "uv sync preflight failed",
+                    self.reporter,
+                )
+                environment_mutation_started = True
                 sync_result = self.uv.sync(
                     workspace.project_dir,
                     python.executable,
@@ -294,7 +309,13 @@ class CompassApplication:
                 final_compatibility = self._compatibility_for(final, nvidia)
             except BaseException as exc:
                 if transaction is not None:
-                    self._restore(workspace, python, transaction, exc)
+                    self._restore(
+                        workspace,
+                        python,
+                        transaction,
+                        exc,
+                        recover_environment=environment_mutation_started,
+                    )
                 raise
         status = (
             "success_with_warnings" if self.reporter.warning_messages else "success"
@@ -480,10 +501,14 @@ class CompassApplication:
         python: ResolvedPython,
         transaction: SafeProjectTransaction,
         original_error: BaseException,
+        *,
+        recover_environment: bool,
     ) -> None:
         self.reporter.phase("restore", "restoring project files after failure")
         try:
             transaction.restore()
+            if not recover_environment:
+                return
             if transaction.lockfile_snapshot.existed:
                 recovery = self.uv.sync(
                     workspace.project_dir,
