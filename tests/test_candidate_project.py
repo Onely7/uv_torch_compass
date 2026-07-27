@@ -101,6 +101,25 @@ def test_preserves_resolution_policy_and_makes_sources_portable(
     ]
 
 
+def test_candidate_currently_keeps_broad_python_range_without_environment_policy(
+    tmp_path: Path,
+) -> None:
+    """Characterize the platform-blind candidate project before the refactor."""
+    document = _render(
+        tmp_path,
+        """
+        [project]
+        name = "target"
+        version = "1"
+        requires-python = ">=3.12"
+        """,
+    )
+
+    assert document["project"]["requires-python"] == ">=3.12"
+    assert "environments" not in document["tool"]["uv"]
+    assert "required-environments" not in document["tool"]["uv"]
+
+
 def test_nightly_candidate_allows_prereleases_and_reuses_official_index(
     tmp_path: Path,
 ) -> None:

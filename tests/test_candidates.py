@@ -339,6 +339,34 @@ def test_probe_runs_requested_framework_contract(tmp_path: Path) -> None:
     assert outcome.framework_validation[0].framework is FrameworkProbe.VLLM
 
 
+def test_probe_currently_does_not_auto_validate_installed_vllm(tmp_path: Path) -> None:
+    """Characterize the explicit-only framework probe contract."""
+
+    class VllmUv(ProbeUv):
+        def sync_candidate(
+            self,
+            path: Path,
+            project_dir: Path,
+            python: Path,
+        ) -> CommandResult:
+            result = super().sync_candidate(path, project_dir, python)
+            metadata = path / "lib/python/site-packages/vllm-0.19.1.dist-info/METADATA"
+            metadata.parent.mkdir(parents=True, exist_ok=True)
+            metadata.write_text("Name: vllm\nVersion: 0.19.1\n", encoding="utf-8")
+            return result
+
+    service = _service(
+        tmp_path,
+        VllmUv(),
+        ProbeRunner([CommandResult(0, _report("cpu"), "")]),
+        ProbeReporter(),
+    )
+
+    outcome = service.find_working_candidate((BackendCandidate("cpu"),))
+
+    assert outcome.framework_validation == ()
+
+
 def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
     reporter = ProbeReporter()
     service = _service(
