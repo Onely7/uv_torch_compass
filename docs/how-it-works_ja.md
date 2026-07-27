@@ -27,9 +27,11 @@ flowchart TD
     Candidates[許可した候補を新しい順に並べる<br/>除外した理由も記録する]
     CPU[公式 CPU 候補を使う]
     Roots[vllm なども含む<br/>選択済みの依存ルート全体を解決する]
+    SourcePolicy[対象の関連 source 方針を引き継ぎ<br/>PyTorch だけを候補 index へ向ける]
     Temporary[依存グラフ全体を<br/>一時環境へ install する]
     Metadata[install 済み metadata を読み<br/>推移的な PyTorch package を見つける]
     Runtime[解決した CUDA component を確認し<br/>tensor と library の検証を行う]
+    Framework[指定された範囲限定の framework 検証を行う<br/>利用者の model は読み込まない]
     CandidateResult{候補は検証を通過したか}
     Diagnose[認証情報を除いた uv の失敗を分類し<br/>package、requirement、index を記録する]
     More{次の候補があるか}
@@ -44,6 +46,8 @@ flowchart TD
     Sync[project 環境を同期する]
     FinalCheck{更新後の実行検証に成功したか}
     Success([success または success_with_warnings<br/>backup は残す])
+    Report{指定した report を<br/>保存できたか}
+    ReportFailure([report の失敗<br/>project は適用済み])
     Restore[元のファイルへ戻す<br/>project 環境の復旧も試す]
     Failed([failed])
 
@@ -57,7 +61,7 @@ flowchart TD
     Command -- plan または apply --> Driver
     Driver -- はい --> Policy --> Candidates --> Roots
     Driver -- いいえ --> CPU --> Roots
-    Roots --> Temporary --> Metadata --> Runtime --> CandidateResult
+    Roots --> SourcePolicy --> Temporary --> Metadata --> Runtime --> Framework --> CandidateResult
     CandidateResult -- はい --> Selected --> Action
     CandidateResult -- いいえ --> Diagnose --> More
     More -- はい --> Roots
@@ -67,11 +71,13 @@ flowchart TD
     Action -- apply --> Backup --> Update --> Preflight
     Preflight -- いいえ --> Restore
     Preflight -- はい --> Sync --> FinalCheck
-    FinalCheck -- はい --> Success
+    FinalCheck -- はい --> Report
+    Report -- 成功または指定なし --> Success
+    Report -- 指定したが失敗 --> ReportFailure
     FinalCheck -- いいえ --> Restore --> Failed
 ```
 
-候補の検証には一時的な virtual environment を使うため、候補が失敗しても対象 project は変更されません。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。
+候補の検証には一時的な uv project と virtual environment を使うため、候補が失敗しても対象 project は変更されません。関連する source と解決方針を一時 project へ引き継ぎ、PyTorch だけを候補 index へ向けます。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。report の保存は transaction 成功後に行うため、report だけの失敗では正常な適用結果を戻しません。
 
 install が失敗した場合は、認証情報と制御文字を除去してから、既知の uv resolver形式を解析します。原因の package、version requirement、依存経路、index、platformは、uv出力または候補方針から確定できる場合だけ記録します。未知の形式を推測で補わず、`unknown`として報告し、完全なredaction済み出力をprivate logへ残します。
 
@@ -102,7 +108,7 @@ CUDA の識別子は、インストール済み uv の `--torch-backend` help �
 
 `--cuda-compatibility minor` は、NVIDIA の制限付き minor-version compatibility を同じ CUDA major 系列内だけで明示的に許可します。CUDA 12 から CUDA 13 をまたぐことはありません。minor 候補では、選択した GPU 用の native machine code も必要です。PTX だけに依存できる build は拒否します。採用した場合は text、log、JSON に警告を残し、結果を `success_with_warnings` とします。
 
-未知の backend、component version、driver 境界は安全側に倒して拒否します。保守的な境界値は [NVIDIA CUDA Toolkit release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) と [CUDA minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html) に基づきます。互換性表を実行時に download しないため、新しい CUDA backend を自動採用するには uv-torch-compass の更新が必要です。
+未知の backend、component version、driver 境界は安全側に倒して拒否します。保守的な境界値は [NVIDIA CUDA Toolkit release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) と [CUDA minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html) に基づきます。互換性表には出典と人が確認した日付を記録し、週次の読み取り専用 workflow で出典への到達性と確認日の古さを検査します。互換性表を実行時に download しないため、新しい CUDA backend を自動採用するには、人が内容を確認した uv-torch-compass の更新が必要です。
 
 ## `nvidia-smi` の CUDA と PyTorch runtime
 
@@ -132,7 +138,11 @@ stable の失敗から nightly へ自動で移りません。nightly の install
 
 `nvidia-smi` は、正しい device 行と解析可能な CUDA 上限を返す必要があります。command の失敗、不正な出力、指定 device の不在を検出成功として扱いません。
 
-`--cuda-device` には `nvidia-smi` の index または完全な GPU UUID を指定できます。省略時は `CUDA_VISIBLE_DEVICES` があればその先頭、なければ最初に報告された GPU を選びます。選択した GPU の UUID を runtime へ渡すため、複数 GPU の環境でも論理的な `cuda:0` になります。
+`--cuda-device` には `nvidia-smi` の index または完全な GPU UUID を指定できます。省略時は `CUDA_VISIBLE_DEVICES` があればその先頭、なければ見えている GPU のうち空き memory が最大のものを選びます。これは使用中の先頭 GPU を避けるための選択であり、memory の予約ではありません。選択した GPU の UUID を runtime へ渡すため、複数 GPU の環境でも論理的な `cuda:0` になります。
+
+## 任意の framework 検証
+
+`--framework-probe vllm` は、PyTorch runtime probe のあとに範囲を限定した連携確認を追加します。インストール済み vLLM version、通常 import、native extension import、vLLM が選んだ CPU または CUDA platform を確認します。model の取得、engine の開始、worker の起動、model 規模の GPU memory 確保は行いません。同じ確認を `apply` 後と `check` でも再実行します。
 
 CUDA を必須にした場合、NVIDIA 情報の欠落はエラーです。`auto` では `nvidia-smi` がなければ CPU 専用 host として扱います。`nvidia-smi` が存在するのに失敗した場合や出力が不正な場合は、不明な NVIDIA 状態を CPU 専用とみなさず失敗します。
 

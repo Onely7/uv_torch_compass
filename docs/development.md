@@ -42,12 +42,15 @@ uv build --no-sources
 Test the wheel artifact, not the editable source environment:
 
 ```bash
+version="$(uv version --short)"
+wheel="dist/uv_torch_compass-${version}-py3-none-any.whl"
+
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
+  --from "$wheel" \
   uv-torch-compass --version
 
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
+  --from "$wheel" \
   uv-torch-compass plan --help
 ```
 
@@ -63,13 +66,14 @@ Normal CI tests Python 3.10, 3.11, 3.12, 3.13, and 3.14 on Ubuntu. Separate whee
 | `Build publication artifacts` | Manually build, smoke-test, and upload preparation artifacts without publishing. |
 | `Publish Python package` | Publish a manual build to TestPyPI or a published GitHub Release to PyPI through Trusted Publishing. |
 | `Release Please` | Maintain a Release PR, then create a version tag and GitHub Release when a human merges it. |
+| `CUDA compatibility catalog audit` | Check the NVIDIA source weekly and fail when the bundled catalog has not received a recent human review. |
 | Dependabot | Check uv, GitHub Actions, and pre-commit dependencies weekly in separate groups. |
 
 Action references use full commit SHAs. Dependabot's `github-actions` ecosystem updates those pins. CUDA runtime validation still requires a Linux host or runner with an NVIDIA GPU.
 
 ## Release management
 
-Release Please reads Conventional Commit messages on `main` and keeps one Release PR current. The Python release strategy updates `CHANGELOG.md`, `pyproject.toml`, `src/uv_torch_compass/__init__.py`, `uv.lock`, and the release manifest together. Because pre-1.0 breaking changes bump the minor version, this change set is expected to propose `v0.2.0`.
+Release Please reads Conventional Commit messages on `main` and keeps one Release PR current. The Python release strategy updates `CHANGELOG.md`, `pyproject.toml`, `src/uv_torch_compass/__init__.py`, `uv.lock`, and the release manifest together. Before 1.0, the configured policy raises the minor version for breaking changes.
 
 Use these commit prefixes for changes that should determine a version:
 

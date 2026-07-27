@@ -28,6 +28,8 @@ dependencies = ["vllm==0.19.1"]
 
 The candidate environment resolves the complete selected dependency graph. If `vllm` requires a particular `torch`, `torchvision`, or `torchaudio` version, that constraint participates in backend selection. The applied configuration adds only the direct source anchors needed for uv's explicit PyTorch index, records those anchors as tool-managed state, and preserves the framework requirement.
 
+Candidate resolution also preserves relevant uv constraints, overrides, private indexes, and selected path, Git, URL, or workspace sources. Only PyTorch packages are redirected to the official candidate index.
+
 If no allowed CUDA index contains the required PyTorch build, the command fails before changing the project. The summary identifies the package and requirement, the package that introduced it, the attempted index, and practical next steps; complete redacted uv output remains in the private log.
 
 From the target project, run a version published on PyPI to verify a candidate and preview the change:
@@ -73,9 +75,12 @@ uv-torch-compass plan --backend cuda
 uv-torch-compass plan --backend cu128
 uv-torch-compass plan --channel nightly
 uv-torch-compass plan --probe-profile compile
+uv-torch-compass plan --framework-probe vllm
 ```
 
 `stable` is the default channel. `nightly` is used only when explicitly selected. CUDA minor-version compatibility is also opt-in with `--cuda-compatibility minor`; it can use a newer CUDA runtime within the same major family, but a successful result is reported with a warning. See [backend and runtime selection](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works.md) for the exact order and checks.
+
+`--framework-probe vllm` is also opt-in. It checks vLLM metadata, importability, its native extension, and the selected execution platform without downloading a model or starting workers.
 
 ## Safety at a glance
 
@@ -84,7 +89,7 @@ uv-torch-compass plan --probe-profile compile
 - Before changing the project environment, `apply` locks the complete graph and performs a locked sync dry run. It also records the current Linux architecture as a required uv environment, so unavailable wheels fail before installation starts.
 - Writes use same-directory temporary files and atomic replacement. A workspace lock prevents two `apply` processes from updating together.
 - Lock, sync, final validation, timeout, SIGINT, and SIGTERM failures trigger file rollback and an environment recovery attempt.
-- Logs and JSON reports redact common credential forms and are created with private file permissions.
+- Logs and JSON reports redact common credential forms and are created with private file permissions. If `apply` succeeds but a requested report cannot be written, the project remains applied and the command exits with `1` while reporting `applied: true`.
 
 Review `git diff` after `plan` and `apply`. Backups remain after success; [recovery and troubleshooting](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery.md) explains their names and limitations.
 
@@ -95,6 +100,7 @@ Review `git diff` after `plan` and `apply`. Backups remain after success; [recov
 - Stable and nightly official PyTorch indexes are supported; stable never falls back to nightly automatically.
 - Base dependencies, selected extras, selected dependency groups, uv workspaces, `torchvision`, and `torchaudio` are supported.
 - CUDA success requires GPU tensor, cuBLAS, cuDNN, architecture, and selected companion-package checks. `--probe-profile compile` additionally tests `torch.compile`.
+- When no GPU is specified, the visible device with the most free memory is selected. Use `--cuda-device` for deterministic selection.
 - NVIDIA drivers are never installed or updated. Re-run `plan` and `apply` after updating a driver.
 - Exit codes are `0` for success, `1` for configuration or operational failure, and `2` for invalid command syntax.
 

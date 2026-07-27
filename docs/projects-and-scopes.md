@@ -48,7 +48,9 @@ Requirements whose PEP 508 markers do not match the resolved Linux Python versio
 
 The candidate environment resolves every dependency root from the selected scopes, not only direct PyTorch declarations. For example, `dependencies = ["vllm==0.19.1"]` is sufficient when that release declares PyTorch dependencies.
 
-uv requires a direct package key before `[tool.uv.sources]` can redirect a transitive dependency to an explicit index. After verification, uv-torch-compass therefore adds a bare `torch`, `torchvision`, or `torchaudio` source anchor to base dependencies when needed. The package version remains constrained by the original framework and the resolved lock. Added anchors are listed under `[tool.uv-torch-compass.state]`, so only tool-owned declarations can be removed later.
+uv requires a direct package key before `[tool.uv.sources]` can redirect a transitive dependency to an explicit index. After verification, uv-torch-compass therefore adds a bare `torch`, `torchvision`, or `torchaudio` source anchor to the selected scope that introduced it. Base wins when more than one selected scope reaches the same package; otherwise the anchor stays in its extra or dependency group. The package version remains constrained by the original framework and the resolved lock. Added anchors store both package and scope under `[tool.uv-torch-compass.state]`, so only tool-owned declarations can be removed later.
+
+Candidate resolution uses a disposable uv project. Relevant constraints, overrides, indexes, and source entries are copied from the target. Relative path and workspace sources are converted to absolute temporary references; Git and URL sources retain their original semantics. PyTorch alone is redirected to the candidate's official explicit index.
 
 Unselected extras and groups are not rewritten. They still participate when uv resolves the complete lockfile, so an incompatibility elsewhere in the project can make `uv lock` fail and trigger rollback.
 

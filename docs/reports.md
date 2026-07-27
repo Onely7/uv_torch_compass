@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `4` and includes these top-level fields:
+The schema version is `5` and includes these top-level fields:
 
 ```json
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "operation": "plan",
   "status": "failed",
   "exit_code": 1,
@@ -34,7 +34,8 @@ The schema version is `4` and includes these top-level fields:
   "request": {
     "backend": "auto",
     "cuda_compatibility": "strict",
-    "probe_profile": "standard"
+    "probe_profile": "standard",
+    "framework_probes": []
   },
   "python": {},
   "candidate_attempts": [
@@ -63,13 +64,23 @@ The schema version is `4` and includes these top-level fields:
     }
   ],
   "resolution_failure": {},
+  "candidate_failure_summary": {},
   "selected_backend": "",
   "selected_index": "",
   "selected_gpu": {},
   "resolved_packages": {},
   "dependency_roots": [],
-  "source_anchors": [],
+  "source_anchors": [
+    {"package": "torch", "scope": "base"}
+  ],
   "required_environment": "sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "probe_contract": {},
+  "framework_validation": [],
+  "operation_state": {
+    "applied": false,
+    "report_written": false
+  },
+  "environment_policy": {},
   "validation": {},
   "changes": [],
   "backups": [],
@@ -81,7 +92,9 @@ The schema version is `4` and includes these top-level fields:
 
 The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. GPU metadata contains the selected device, NVIDIA driver version, and the CUDA maximum printed by `nvidia-smi`.
 
-Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, and an optional `failure`. Policy-rejected candidates are recorded as `skipped` before installation. `resolution_failure` aggregates failed packages, indexes, and de-duplicated suggestions across all candidates. Missing facts are JSON `null`; they are never guessed. A successful CUDA `validation` includes:
+Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, and an optional `failure`. Policy-rejected candidates are recorded as `skipped` before installation. `candidate_failure_summary` aggregates failed packages, indexes, and de-duplicated suggestions across all candidates. `resolution_failure` contains that terminal aggregate only when the command itself fails; an earlier rejected candidate does not make a successful result look failed. Missing facts are JSON `null`; they are never guessed.
+
+Schema 5 also records the executed `probe_contract`, opt-in `framework_validation`, filtered child-environment policy, scoped source anchors, and final operation state. A successful CUDA `validation` includes:
 
 - resolved PyTorch CUDA runtime and runtime-component version;
 - required minimum driver and `strict`, `minor`, or `unsupported` classification;
@@ -112,11 +125,11 @@ uv-torch-compass apply \
   --report-file artifacts/torch-compass.json
 ```
 
-The destination is resolved from the target project when relative, written through atomic replacement, and set to mode `0600`. A report write failure makes the command fail rather than silently omitting the requested artifact.
+The destination is resolved from the target project when relative, written through atomic replacement, and set to mode `0600`. The report is persisted before the final stdout summary. If project application succeeds but report persistence fails, the command exits with `1`, writes a structured failure to stderr, and records `applied: true` with `operation_state.report_written: false`. It does not roll back a valid project solely because the separate report artifact failed.
 
 ## Credential handling
 
-Before text reaches logs, diffs, JSON, or reports, a shared redactor removes common URL user information, token/key/password/secret/signature query values, authorization headers, and secret-like variable assignments. Child-environment values are never logged; only names of removed control variables may be recorded.
+Before text reaches logs, diffs, JSON, or reports, a shared redactor removes common URL user information, token/key/password/secret/signature query values, authentication and cookie headers, JSON secret fields, secret-bearing command options, and secret-like variable assignments. Child-environment values are never logged; only names of removed control variables may be recorded.
 
 Redaction is a safety boundary, not permission to publish logs unchanged. Local paths, package versions, GPU names, and nonstandard credential formats can still be sensitive, so review artifacts before sharing them.
 

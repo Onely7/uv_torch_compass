@@ -17,6 +17,7 @@ backend = "auto"
 channel = "stable"
 cuda-compatibility = "strict"
 probe-profile = "standard"
+framework-probes = ["vllm"]
 extras = ["vision"]
 groups = ["training"]
 cuda-device = "0"
@@ -43,6 +44,7 @@ output-format = "text"
 | `UV_TORCH_COMPASS_CHANNEL` | `stable` または `nightly` |
 | `UV_TORCH_COMPASS_CUDA_COMPATIBILITY` | `strict`、または明示的に許可する `minor` |
 | `UV_TORCH_COMPASS_PROBE_PROFILE` | `standard` または `compile` |
+| `UV_TORCH_COMPASS_FRAMEWORK_PROBES` | comma 区切りの明示的な framework 検証。現在は `vllm` |
 | `UV_TORCH_COMPASS_EXTRAS` | comma 区切りの extra |
 | `UV_TORCH_COMPASS_GROUPS` | comma 区切りの依存グループ |
 | `UV_TORCH_COMPASS_CUDA_DEVICE` | NVIDIA index または UUID |
@@ -70,8 +72,9 @@ export UV_TORCH_COMPASS_EXTRAS='vision,audio,vision,'
 | channel | `stable` |
 | CUDA compatibility | `strict` |
 | probe profile | `standard` |
+| framework probe | なし |
 | extra と group | なし |
-| CUDA device | 現在の CUDA 選択で見える先頭 device。なければ `nvidia-smi` の先頭 device |
+| CUDA device | 現在の CUDA 選択や `--cuda-device` で固定しない場合、見えている device のうち空き memory が最大のもの |
 | link mode | `copy` |
 | log directory | 対象 project 以下の `.uv-torch-compass/logs` |
 | project 操作の timeout | 1800 秒 |

@@ -27,9 +27,11 @@ flowchart TD
     Candidates[Keep allowed candidates newest first<br/>Record rejected candidates and reasons]
     CPU[Use the official CPU candidate]
     Roots[Resolve all selected dependency roots<br/>including frameworks such as vllm]
+    SourcePolicy[Copy relevant target source policy<br/>Redirect only PyTorch to the candidate index]
     Temporary[Install the complete graph<br/>in a temporary environment]
     Metadata[Read installed package metadata<br/>Find transitive PyTorch packages]
     Runtime[Verify resolved CUDA components<br/>Run tensor and library checks]
+    Framework[Run requested bounded framework checks<br/>without loading user models]
     CandidateResult{Did the candidate pass?}
     Diagnose[Classify the redacted uv failure<br/>Record package, requirement, and index]
     More{Is another candidate available?}
@@ -44,6 +46,8 @@ flowchart TD
     Sync[Synchronize the project environment]
     FinalCheck{Did the final runtime check pass?}
     Success([success or success_with_warnings<br/>Keep the backups])
+    Report{Was a report requested<br/>and written?}
+    ReportFailure([failed report<br/>Project remains applied])
     Restore[Restore the original files<br/>Attempt to recover the environment]
     Failed([failed])
 
@@ -57,7 +61,7 @@ flowchart TD
     Command -- plan or apply --> Driver
     Driver -- Yes --> Policy --> Candidates --> Roots
     Driver -- No --> CPU --> Roots
-    Roots --> Temporary --> Metadata --> Runtime --> CandidateResult
+    Roots --> SourcePolicy --> Temporary --> Metadata --> Runtime --> Framework --> CandidateResult
     CandidateResult -- Yes --> Selected --> Action
     CandidateResult -- No --> Diagnose --> More
     More -- Yes --> Roots
@@ -67,11 +71,13 @@ flowchart TD
     Action -- apply --> Backup --> Update --> Preflight
     Preflight -- No --> Restore
     Preflight -- Yes --> Sync --> FinalCheck
-    FinalCheck -- Yes --> Success
+    FinalCheck -- Yes --> Report
+    Report -- Yes or not requested --> Success
+    Report -- Requested but failed --> ReportFailure
     FinalCheck -- No --> Restore --> Failed
 ```
 
-Candidate tests run in temporary virtual environments, so failed candidates do not modify the target project. Only `apply` writes the selected index. If an error occurs after backups are created, the tool restores the original files and attempts to recover the project environment.
+Candidate tests run in temporary uv projects and virtual environments, so failed candidates do not modify the target project. Relevant source and resolution policy is copied into the temporary project, while only PyTorch is redirected to the candidate index. Only `apply` writes the selected index. If an error occurs after backups are created, the tool restores the original files and attempts to recover the project environment. Report writing happens after a successful transaction; a report-only failure does not undo a valid applied project.
 
 When installation fails, uv-torch-compass interprets known uv resolver forms after removing credentials and control characters. It records the implicated package, version requirement, dependency path, index, and platform only when the uv output or candidate policy establishes them. Unknown formats are reported as unknown rather than guessed, with the complete redacted output retained in the private log.
 
@@ -102,7 +108,7 @@ The default `strict` policy requires all three checks below:
 
 `--cuda-compatibility minor` explicitly allows NVIDIA's limited minor-version compatibility within the same CUDA major family. It never crosses from CUDA 12 to CUDA 13. A minor-compatible candidate must also include native machine code for the selected GPU; a build that can rely only on PTX is rejected. If selected, text, logs, and JSON retain a warning and the result becomes `success_with_warnings`.
 
-Unknown backends, component versions, and driver boundaries fail closed. The conservative boundaries come from the [NVIDIA CUDA Toolkit release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) and the [CUDA minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html). The catalog is not downloaded at runtime, so a newly published CUDA backend requires a uv-torch-compass update before automatic use.
+Unknown backends, component versions, and driver boundaries fail closed. The conservative boundaries come from the [NVIDIA CUDA Toolkit release notes](https://docs.nvidia.com/cuda/cuda-toolkit-release-notes/) and the [CUDA minor-version compatibility guide](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html). The catalog records its source and human review date. A weekly read-only workflow checks that the source remains reachable and the review is not stale. The catalog is not downloaded at runtime, so a newly published CUDA backend requires a reviewed uv-torch-compass update before automatic use.
 
 ## `nvidia-smi` CUDA and the PyTorch runtime
 
@@ -132,7 +138,11 @@ Stable failures never switch to nightly automatically. Nightly candidate install
 
 `nvidia-smi` must return valid device rows and a parseable CUDA maximum. A failed command, malformed output, or missing requested device is not treated as successful inspection.
 
-`--cuda-device` accepts an `nvidia-smi` index or full GPU UUID. Without it, the first value from `CUDA_VISIBLE_DEVICES` is honored when present; otherwise, the first reported GPU is selected. The selected GPU's UUID is passed to the runtime so it becomes logical `cuda:0` even on a multi-GPU host.
+`--cuda-device` accepts an `nvidia-smi` index or full GPU UUID. Without it, the first value from `CUDA_VISIBLE_DEVICES` is honored when present; otherwise, the visible GPU with the most free memory is selected. This avoids a heavily occupied first device but does not reserve memory. The selected GPU's UUID is passed to the runtime so it becomes logical `cuda:0` even on a multi-GPU host.
+
+## Optional framework checks
+
+`--framework-probe vllm` adds a bounded integration check after the PyTorch runtime probe. It confirms the installed vLLM version, normal import, native extension import, and whether vLLM selected the expected CPU or CUDA platform. It does not download a model, start an engine, launch workers, or intentionally allocate model-sized GPU memory. The same check runs again after `apply` and during `check`.
 
 When CUDA is required, missing NVIDIA information is an error. With `auto`, an absent `nvidia-smi` means the host is treated as CPU-only. If `nvidia-smi` exists but fails or returns malformed data, the command fails instead of treating uncertain NVIDIA state as a CPU-only host.
 

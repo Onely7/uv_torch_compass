@@ -48,7 +48,9 @@ PEP 508 marker が、解決済み Linux Python の version と implementation �
 
 候補環境では、直接の PyTorch 宣言だけでなく、選択した依存範囲の依存ルートをすべて解決します。たとえば、対象 release が PyTorch への依存を宣言していれば、`dependencies = ["vllm==0.19.1"]` だけで検証できます。
 
-uv が推移依存を明示的な index へ振り分けるには、`[tool.uv.sources]` のキーに対応する直接依存が必要です。そのため検証後に、必要な `torch`、`torchvision`、`torchaudio` を基本依存へ version なしの source anchor として補います。version は元の framework の制約と lock によって決まります。追加した anchor は `[tool.uv-torch-compass.state]` に記録し、ツールが所有する宣言だけを後から削除できるようにします。
+uv が推移依存を明示的な index へ振り分けるには、`[tool.uv.sources]` のキーに対応する直接依存が必要です。そのため検証後に、必要な `torch`、`torchvision`、`torchaudio` を、それを導入した選択済み scope へ version なしの source anchor として補います。複数 scope から同じ package へ到達する場合は base を優先し、それ以外では extra または依存グループに保持します。version は元の framework の制約と lock によって決まります。追加した anchor は package と scope の組として `[tool.uv-torch-compass.state]` に記録し、ツールが所有する宣言だけを後から削除できるようにします。
+
+候補解決には破棄可能な uv project を使います。対象の constraint、override、index、関連 source を引き継ぎ、相対 path と workspace source は一時 project から参照できる絶対 path に変換します。Git と URL source の意味は維持し、公式候補 index へ切り替えるのは PyTorch だけです。
 
 選択していない extra と group の宣言は書き換えません。ただし uv が lockfile 全体を解決するときには影響するため、project 内の別の非互換性で `uv lock` が失敗し、rollback する場合があります。
 

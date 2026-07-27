@@ -23,7 +23,7 @@ You can also build a wheel and run that exact artifact:
 ```bash
 cd /path/to/uv_torch_compass
 uv build --no-sources
-uvx --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
+uvx --from dist/uv_torch_compass-<version>-py3-none-any.whl \
   uv-torch-compass --help
 ```
 
@@ -76,6 +76,7 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--cuda-device INDEX_OR_UUID` | Select a GPU known to `nvidia-smi`. |
 | `--cuda-compatibility strict\|minor` | Require normal driver support, or explicitly allow limited same-major CUDA compatibility; default: `strict`. |
 | `--probe-profile standard\|compile` | Run standard library checks, or also test `torch.compile`; default: `standard`. |
+| `--framework-probe vllm` | Validate the selected framework integration; repeatable and disabled by default. |
 | `--log-dir PATH` | Store the unique private run log in this directory. |
 | `--timeout SECONDS` | Set the positive timeout for installation, project checks, runtime probes, lock, and sync; default: 1800. |
 | `--output-format text\|json` | Choose human-readable output or one final JSON object. |
@@ -104,6 +105,8 @@ uv-torch-compass plan \
 ```
 
 Minor mode is not an automatic fallback. If it selects a runtime newer than the driver's normal support level, the successful result includes a warning.
+
+The vLLM framework probe checks installed metadata, importability, the native extension, and the selected CPU or CUDA platform. It does not download a model, allocate a model cache, or start workers.
 
 ## Help and exit codes
 

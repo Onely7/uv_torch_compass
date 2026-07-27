@@ -42,12 +42,15 @@ uv build --no-sources
 editable source 環境ではなく wheel artifact を検証します。
 
 ```bash
+version="$(uv version --short)"
+wheel="dist/uv_torch_compass-${version}-py3-none-any.whl"
+
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
+  --from "$wheel" \
   uv-torch-compass --version
 
 uvx --refresh --isolated \
-  --from dist/uv_torch_compass-0.1.1-py3-none-any.whl \
+  --from "$wheel" \
   uv-torch-compass plan --help
 ```
 
@@ -63,13 +66,14 @@ uvx --refresh --isolated \
 | `Build publication artifacts` | 公開せず、build・smoke test・準備 artifact の upload を手動実行する |
 | `Publish Python package` | Trusted Publishing により、手動 build を TestPyPI へ、公開済み GitHub Release を PyPI へ公開する |
 | `Release Please` | Release PR を更新し、人が merge したときに version tag と GitHub Release を作る |
+| `CUDA compatibility catalog audit` | NVIDIA の根拠資料を週次確認し、組み込み catalog の人による確認日が古ければ失敗する |
 | Dependabot | uv、GitHub Actions、pre-commit の依存を別 group で週次確認する |
 
 Action の参照は完全な commit SHA で固定します。Dependabot の `github-actions` ecosystem が固定値を更新します。CUDA runtime の確認には、NVIDIA GPU を持つ Linux host または runner が別途必要です。
 
 ## release 管理
 
-Release Please は `main` の Conventional Commit を読み、一つの Release PR を最新の状態に保ちます。Python 用の release 方針により、`CHANGELOG.md`、`pyproject.toml`、`src/uv_torch_compass/__init__.py`、`uv.lock`、release manifest を同じ PR で更新します。1.0 未満の破壊的変更は minor version を上げるため、今回の変更では `v0.2.0` の提案を想定します。
+Release Please は `main` の Conventional Commit を読み、一つの Release PR を最新の状態に保ちます。Python 用の release 方針により、`CHANGELOG.md`、`pyproject.toml`、`src/uv_torch_compass/__init__.py`、`uv.lock`、release manifest を同じ PR で更新します。設定済みの方針では、1.0 未満の破壊的変更は minor version を上げます。
 
 version を決める変更には、次の commit prefix を使います。
 
