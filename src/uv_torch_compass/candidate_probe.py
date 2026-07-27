@@ -39,6 +39,31 @@ class ProbeOutcome:
     installed_pytorch: frozenset[str] = frozenset()
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateProbeResult:
+    """Represent either a verified candidate or a generic rejected candidate."""
+
+    outcome: ProbeOutcome | None
+    failure_reason: str
+
+    def __post_init__(self) -> None:
+        """Require exactly one success outcome or failure reason."""
+        if (self.outcome is None) != bool(self.failure_reason):
+            raise ValueError(
+                "candidate result requires either an outcome or a failure reason"
+            )
+
+    @classmethod
+    def passed(cls, outcome: ProbeOutcome) -> CandidateProbeResult:
+        """Create a successful candidate result."""
+        return cls(outcome, "")
+
+    @classmethod
+    def failed(cls, reason: str) -> CandidateProbeResult:
+        """Create a failed candidate result."""
+        return cls(None, reason)
+
+
 @dataclass(slots=True)
 class CandidateProbeService:
     """Install and runtime-test candidates until one passes all requirements."""
@@ -68,18 +93,19 @@ class CandidateProbeService:
         """
         attempts = list(prior_attempts)
         for candidate in candidates:
-            outcome = self._probe_candidate(candidate)
-            if outcome is None:
+            result = self._probe_candidate(candidate)
+            if result.outcome is None:
                 attempts.append(
                     CandidateAttempt(
                         candidate.value,
                         "runtime",
                         "failed",
-                        "candidate installation or runtime validation failed",
+                        result.failure_reason,
                         self._compatibility_for(candidate).level.value,
                     )
                 )
                 continue
+            outcome = result.outcome
             attempts.append(
                 CandidateAttempt(
                     candidate.value,
@@ -103,7 +129,7 @@ class CandidateProbeService:
             f"no usable PyTorch backend was found; attempted: {attempted}"
         )
 
-    def _probe_candidate(self, candidate: BackendCandidate) -> ProbeOutcome | None:
+    def _probe_candidate(self, candidate: BackendCandidate) -> CandidateProbeResult:
         venv = Path(
             tempfile.mkdtemp(
                 prefix=f"candidate-{candidate.value}-", dir=self.temporary_root
@@ -116,14 +142,18 @@ class CandidateProbeService:
         self.reporter.detail(created.stdout + created.stderr)
         if created.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: venv creation failed")
-            return None
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
         installed = self.uv.install_candidate(
             venv, self.requirements.probe_requirements, candidate
         )
         self.reporter.detail(installed.stdout + installed.stderr)
         if installed.returncode != 0:
             self.reporter.warn(f"candidate {candidate.value}: installation failed")
-            return None
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
 
         try:
             installed_pytorch = frozenset(
@@ -133,24 +163,37 @@ class CandidateProbeService:
             )
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
-            return None
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
         if "torch" not in installed_pytorch:
             self.reporter.warn(
                 f"candidate {candidate.value}: selected dependencies do not install torch"
             )
-            return None
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
 
         validation = self._run_probe(venv, candidate, installed_pytorch)
         if validation.returncode == 0:
-            return self._parse_success(
+            outcome = self._parse_success(
                 validation.stdout, candidate, False, installed_pytorch
+            )
+            return (
+                CandidateProbeResult.passed(outcome)
+                if outcome is not None
+                else CandidateProbeResult.failed(
+                    "candidate installation or runtime validation failed"
+                )
             )
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
             self.reporter.warn(
                 f"candidate {candidate.value}: runtime validation failed"
             )
-            return None
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
 
         self.reporter.warn(
             f"candidate {candidate.value}: retrying the NumPy bridge with numpy<2"
@@ -158,13 +201,24 @@ class CandidateProbeService:
         repaired = self.uv.install_numpy_lt2(venv)
         self.reporter.detail(repaired.stdout + repaired.stderr)
         if repaired.returncode != 0:
-            return None
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
         validation = self._run_probe(venv, candidate, installed_pytorch)
         self.reporter.detail(validation.stdout + validation.stderr)
         if validation.returncode != 0:
-            return None
-        return self._parse_success(
+            return CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
+        outcome = self._parse_success(
             validation.stdout, candidate, True, installed_pytorch
+        )
+        return (
+            CandidateProbeResult.passed(outcome)
+            if outcome is not None
+            else CandidateProbeResult.failed(
+                "candidate installation or runtime validation failed"
+            )
         )
 
     def _run_probe(
