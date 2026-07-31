@@ -82,6 +82,8 @@ This resolves to `vision` followed by `audio`.
 
 The configurable timeout covers candidate installation, project checks, runtime probes, lock, and sync. Short metadata commands, such as reading the uv version or available backend names, retain a separate 30-second limit.
 
+uv 0.11.28 is the tested minimum. Earlier releases are not rejected solely by version: the command warns, checks optional flags directly, and skips only vLLM wheel preflight when selective installation is unavailable. Full installation and runtime validation still run.
+
 `strict` rejects a CUDA runtime newer than the level normally supported by the selected driver. `minor` opts into limited same-major CUDA compatibility and records a warning if used. `standard` runs tensor, NumPy, cuBLAS, cuDNN, architecture, and selected companion-package checks; `compile` adds `torch.compile`.
 
 ## Environment passed to uv

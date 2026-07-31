@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from uv_torch_compass.candidate_failures import (
+    CandidateFailure,
+    FrameworkCompatibilityDecision,
+)
 from uv_torch_compass.candidate_resolution import CandidateResolution
 from uv_torch_compass.cuda_compatibility import CompatibilityDecision
 from uv_torch_compass.domain import (
     CandidateAttempt,
     ProbeProfile,
-    ResolutionFailure,
     RuntimeReport,
 )
 from uv_torch_compass.framework_validation import FrameworkValidation
@@ -54,6 +57,7 @@ class ProbeOutcome:
     source_anchors: tuple[ManagedSourceAnchor, ...] = ()
     framework_validation: tuple[FrameworkValidation, ...] = ()
     resolution: CandidateResolution | None = None
+    framework_compatibility: FrameworkCompatibilityDecision | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,15 +65,16 @@ class CandidateProbeResult:
     """Represent either a verified candidate or a rejected candidate."""
 
     outcome: ProbeOutcome | None
-    failure: ResolutionFailure | None
+    failure: CandidateFailure | None
     resolution: CandidateResolution | None = None
     stage: str = "runtime"
+    framework_compatibility: FrameworkCompatibilityDecision | None = None
 
     def __post_init__(self) -> None:
         """Require exactly one success outcome or failure reason."""
         if (self.outcome is None) == (self.failure is None):
             raise ValueError("candidate result requires either an outcome or a failure")
-        if self.stage not in {"lock", "install", "runtime", "framework"}:
+        if self.stage not in {"lock", "artifact", "install", "runtime", "framework"}:
             raise ValueError(f"unsupported candidate result stage {self.stage!r}")
 
     @classmethod
@@ -80,10 +85,11 @@ class CandidateProbeResult:
     @classmethod
     def failed(
         cls,
-        failure: ResolutionFailure,
+        failure: CandidateFailure,
         resolution: CandidateResolution | None = None,
         *,
         stage: str = "runtime",
+        framework_compatibility: FrameworkCompatibilityDecision | None = None,
     ) -> CandidateProbeResult:
         """Create a failed candidate result."""
-        return cls(None, failure, resolution, stage)
+        return cls(None, failure, resolution, stage, framework_compatibility)

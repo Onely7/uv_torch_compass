@@ -48,7 +48,7 @@ def test_vllm_probe_reports_bounded_failure(monkeypatch) -> None:
     result = framework_probe._probe_vllm("cpu")
 
     assert result["status"] == "FAIL"
-    assert "native extension" in result["error"]
+    assert "native extension" in str(result["error"])
 
 
 def test_main_emits_one_json_document(monkeypatch, capsys) -> None:
@@ -73,7 +73,7 @@ def test_main_emits_one_json_document(monkeypatch, capsys) -> None:
 
     document = json.loads(capsys.readouterr().out)
     assert status == 0
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["results"][0]["framework"] == "vllm"
     assert document["results"][0]["trigger"] == "explicit"
 

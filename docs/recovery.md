@@ -68,6 +68,7 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | --- | --- |
 | `uv was not found in PATH` | Run `uv --version` in the same shell. |
 | backend selection is unsupported | Update uv and check that `uv pip install --help` lists `--torch-backend`. |
+| uv older than 0.11.28 warning | Update uv when possible. Without selective-install capabilities, artifact preflight is skipped but full validation still runs. |
 | Linux-only command failure | Run `plan`, `apply`, or `check` on Linux; only help/version are cross-platform. |
 | no selected PyTorch requirement applies | Check selected extras/groups and PEP 508 Python or implementation markers. |
 | `nvidia-smi` failure or missing CUDA version | Check NVIDIA driver installation, device visibility, and `CUDA_VISIBLE_DEVICES`. |
@@ -77,6 +78,8 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | native architecture is missing in minor mode | The wheel lacks native machine code for the selected GPU. Choose another backend or update the driver and return to strict mode. |
 | compile probe failed | Re-run with `--probe-profile standard` to separate normal CUDA operation from the optional Inductor/Triton path. |
 | vLLM framework probe failed | Check the installed `vllm` metadata, native extension, and reported platform. The probe runs automatically when vLLM is resolved and does not load a model or start workers. |
+| `framework-cuda-abi` | Compare the required CUDA variant or `libcudart.so.N` major with the candidate and driver. Select a compatible vLLM wheel, update the driver for the required backend, or build vLLM from source. |
+| `framework-api-incompatibility` mentioning `DTensor` | Follow the reported dependency path. For the reviewed vLLM 0.6.0 case, constrain Transformers to 4.44.2, select `cu121`, or upgrade vLLM. Backend-independent failures stop later candidate installs. |
 | candidate source policy could not be prepared | Inspect path, Git, URL, workspace, constraint, override, and index sources used by the target project. Candidate verification preserves relevant sources instead of silently replacing them with PyPI. |
 | no usable backend | Read each failed candidate's package, requirement, dependency path, and index. Use its suggestions; inspect the private log when the failure kind is `unknown`. |
 | candidate `lock` failure | Read the candidate failure and private log for the package, requirement, index, and platform. No PyTorch resolution is claimed unless a valid lock was parsed. |

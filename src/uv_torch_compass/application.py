@@ -6,8 +6,10 @@ import difflib
 import os
 import platform
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 
 from uv_torch_compass.backend_selection import build_candidate_plan
 from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
@@ -56,7 +58,10 @@ from uv_torch_compass.safe_transaction import (
 )
 from uv_torch_compass.target_state import ApplicationResult, TargetState
 from uv_torch_compass.uv_commands import UvCommandClient
+from uv_torch_compass.vllm_compatibility import framework_catalog_metadata
 from uv_torch_compass.workspace import WorkspaceContext, resolve_workspace
+
+_MINIMUM_TESTED_UV = Version("0.11.28")
 
 
 @dataclass(slots=True)
@@ -67,6 +72,7 @@ class CompassApplication:
     runner: ProcessRunner
     reporter: CommandReporter
     uv: UvCommandClient
+    _uv_version: str = field(default="unknown", init=False, repr=False)
 
     def run(self) -> ApplicationResult:
         """Dispatch the selected side-effect contract.
@@ -125,6 +131,20 @@ class CompassApplication:
             raise CommandError("apply, plan, and check currently support Linux only")
         version = self.uv.version()
         _require_success(version, "failed to run uv --version")
+        self._uv_version = _parse_uv_version(version.stdout)
+        try:
+            parsed_version = Version(self._uv_version)
+        except InvalidVersion:
+            self.reporter.warn(
+                "uv version could not be parsed; optional artifact inspection "
+                "capabilities will be checked directly"
+            )
+        else:
+            if parsed_version < _MINIMUM_TESTED_UV:
+                self.reporter.warn(
+                    f"uv {parsed_version} is older than the tested minimum "
+                    f"{_MINIMUM_TESTED_UV}; update uv for artifact preflight support"
+                )
         if (
             self.options.operation is not Operation.CHECK
             and not self.uv.available_torch_backends()
@@ -207,6 +227,7 @@ class CompassApplication:
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
         metadata = _metadata(python, nvidia)
+        metadata["uv"] = _uv_metadata(self._uv_version)
         metadata["dependency_roots"] = [
             {"scope": item.scope.label, "requirement": str(item.requirement)}
             for item in requirements.selected
@@ -424,6 +445,7 @@ class CompassApplication:
         )
         initial_state.require_unchanged(self.options.operation)
         metadata = _metadata(python, nvidia)
+        metadata["uv"] = _uv_metadata(self._uv_version)
         metadata["framework_validation"] = framework_validation_document(
             framework_validations
         )
@@ -699,6 +721,7 @@ def _metadata(
             "executable": str(python.executable),
         },
         "cuda_compatibility_catalog": compatibility_catalog_metadata(),
+        "framework_compatibility_catalog": framework_catalog_metadata(),
     }
     if nvidia is not None:
         metadata["gpu"] = {
@@ -710,6 +733,18 @@ def _metadata(
             "memory_free_mib": nvidia.selected.memory_free_mib,
         }
     return metadata
+
+
+def _parse_uv_version(output: str) -> str:
+    fields = output.strip().split()
+    return fields[1] if len(fields) >= 2 and fields[0] == "uv" else "unknown"
+
+
+def _uv_metadata(version: str) -> dict[str, str]:
+    return {
+        "version": version,
+        "minimum_tested": str(_MINIMUM_TESTED_UV),
+    }
 
 
 def _requested_cuda_device(options: RunOptions) -> tuple[str | None, bool]:

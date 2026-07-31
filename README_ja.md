@@ -82,6 +82,8 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 
 解決結果に `vllm` が含まれる場合、範囲を限定した vLLM 検証を自動実行します。`--framework-probe vllm` は明示的に要求したい場合にも使えます。model を取得したり worker を起動したりせず、metadata、import、native extension、選択された実行 platform を確認します。
 
+利用中の uv が package の選択 install に対応している場合、依存一式を入れる前に lock 済み vLLM wheel だけを展開します。wheel の import や実行は行いません。ELF metadata から `libcudart.so.13` などの必要 library を読み取り、PyTorch backend と照合します。公式 wheel について確認済みの情報も補助的に使うため、「vLLM は CUDA 13 を必要とするが、`cu129` は CUDA 12.9」のような不一致を、大容量 install の繰り返しより前に報告できます。`DTensor` がないといった Python API の失敗は、CUDA ABI の失敗とは分けて表示します。
+
 ## 安全性の概要
 
 - `plan` は一時環境へ候補をインストールして検証しますが、対象の `pyproject.toml`、`uv.lock`、プロジェクト環境を変更しません。
@@ -91,6 +93,7 @@ channel の初期値は安定版を示す `stable` です。開発版の `nightl
 - 同じディレクトリの一時ファイルを使い、書きかけを見せずに一括置換します。workspace lock により、二つの `apply` が同時に更新することも防ぎます。
 - lock、sync、最終検証、timeout、SIGINT、SIGTERM の失敗時は、ファイルを復元し、環境の復旧も試みます。
 - ログと JSON report は一般的な認証情報をマスクし、所有者だけが読める権限で作ります。`apply` の成功後に指定した report だけを書き込めなかった場合、project は適用済みのまま、`applied: true` を報告して終了コード `1` になります。
+- uv が 0.11.28 より古い場合は更新を勧める警告を表示します。選択 install の option がなければ artifact の事前検査だけを省略し、従来の完全 install と runtime 検証を安全側の fallback として続けます。
 
 `plan` と `apply` のあとには `git diff` を確認してください。成功後もバックアップは残ります。名前と復旧上の制約は[復旧とトラブル対応](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery_ja.md)で説明します。
 

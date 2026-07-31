@@ -187,7 +187,7 @@ def test_main_emits_json_for_configuration_failure(tmp_path: Path, capsys) -> No
         == 1
     )
     document = json.loads(capsys.readouterr().out)
-    assert document["schema_version"] == 6
+    assert document["schema_version"] == 7
     assert document["status"] == "failed"
     assert document["exit_code"] == 1
     assert document["errors"]
@@ -326,7 +326,7 @@ def test_generic_command_failure_has_no_candidate_attempts(
 
     document = json.loads(capsys.readouterr().out)
     assert status == 1
-    assert document["schema_version"] == 6
+    assert document["schema_version"] == 7
     assert document["candidate_attempts"] == []
 
 

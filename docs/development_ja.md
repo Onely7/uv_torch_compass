@@ -63,16 +63,18 @@ uvx --refresh --isolated \
 | `CI` | version matrix、pre-commit、ty、build、wheel smoke test を行う |
 | `CodeQL` | 最小権限で Python と Actions を `security-extended` 解析する |
 | `Real PyTorch CPU smoke test` | 一時対象 project へ実 CPU build を install し、手動で検証する |
-| `Transitive resolver smoke test` | 公式 `cu126` index と `vllm==0.19.1` を手動で lock し、package download や GPU 演算を行わず推移的な PyTorch source を確認する |
+| `Transitive resolver smoke test` | vLLM を公式 CUDA index で手動 lock し、その wheel だけを展開して CUDA ABI と推移的 PyTorch source を GPU なしで確認する |
 | `Build publication artifacts` | 公開せず、build・smoke test・準備 artifact の upload を手動実行する |
 | `Publish Python package` | Trusted Publishing により、手動 build を TestPyPI へ、公開済み GitHub Release を PyPI へ公開する |
 | `Release Please` | Release PR を更新し、人が merge したときに version tag と GitHub Release を作る |
-| `CUDA compatibility catalog audit` | NVIDIA の根拠資料を週次確認し、組み込み catalog の人による確認日が古ければ失敗する |
+| `CUDA and framework compatibility catalog audit` | NVIDIA と確認済み vLLM の根拠、確認日、公開 CUDA 関連 metadata を週次確認する |
 | Dependabot | uv、GitHub Actions、pre-commit の依存を別 group で週次確認する |
 
 Action の参照は完全な commit SHA で固定します。Dependabot の `github-actions` ecosystem が固定値を更新します。CUDA runtime の確認には、NVIDIA GPU を持つ Linux host または runner が別途必要です。
 
-推移依存の確認は、GitHub の **Actions → Transitive resolver smoke test → Run workflow** から実行します。初期値が受け入れ条件の構成です。別の公開済み組合せを調べる場合だけ requirement または backend を変更してください。この workflow は PyPI と公式 PyTorch index へ接続しますが、`uv lock` で終了します。通常の回帰テストは引き続き外部通信を使いません。
+推移依存の確認は、GitHub の **Actions → Transitive resolver smoke test → Run workflow** から実行します。初期値が受け入れ条件の構成です。別の公開済み組合せを調べる場合だけ requirement または backend を変更してください。この workflow は PyPI と公式 PyTorch index へ接続し、graph を lock したあと vLLM wheel だけを download して artifact を検査します。GPU は使いません。通常の回帰テストは引き続き外部通信を使いません。
+
+framework catalog を変更するときは、確認済み source URL と日付を同時に更新し、合成 ELF または metadata の回帰 fixture を追加して catalog audit を手動実行します。catalog は公式 PyPI の完全一致 version にだけ適用します。未知、独自、Git、local、source build に公式 wheel の情報を当てはめず、artifact／runtime 検証へ進めます。
 
 ## release 管理
 

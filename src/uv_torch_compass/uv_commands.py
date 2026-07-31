@@ -71,6 +71,17 @@ class UvCommandClient:
                 values.append(value)
         return tuple(values)
 
+    def sync_capabilities(self) -> frozenset[str]:
+        """Return optional sync flags advertised by the active uv executable."""
+        result = self._diagnostic(["sync", "--help"])
+        if result.returncode != 0:
+            return frozenset()
+        return frozenset(
+            option
+            for option in ("--only-install-package", "--no-build-package")
+            if option in result.stdout
+        )
+
     def python_find(self, request: str, *, project_dir: Path) -> CommandResult:
         """Find a system interpreter without selecting an unrelated virtualenv."""
         return self._diagnostic(
@@ -117,6 +128,33 @@ class UvCommandClient:
         ]
         return self._heavy(
             arguments,
+            cwd=project_dir,
+            overrides={"UV_PROJECT_ENVIRONMENT": str(venv)},
+        )
+
+    def sync_locked_package(
+        self,
+        venv: Path,
+        project_dir: Path,
+        python: Path,
+        package: str,
+    ) -> CommandResult:
+        """Extract one locked wheel without installing or building dependencies."""
+        return self._heavy(
+            [
+                "sync",
+                "--project",
+                str(project_dir),
+                "--python",
+                str(python),
+                "--no-install-project",
+                "--no-dev",
+                "--locked",
+                "--only-install-package",
+                package,
+                "--no-build-package",
+                package,
+            ],
             cwd=project_dir,
             overrides={"UV_PROJECT_ENVIRONMENT": str(venv)},
         )

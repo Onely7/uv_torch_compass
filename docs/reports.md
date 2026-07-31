@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `6`. Candidate resolution and later failures are represented separately:
+The schema version is `7`. Candidate resolution, artifact evidence, and later failures are represented separately:
 
 ```json
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "operation": "plan",
   "status": "failed",
   "exit_code": 1,
@@ -45,6 +45,7 @@ The schema version is `6`. Candidate resolution and later failures are represent
       "status": "failed",
       "reason": "A required wheel is unavailable for the selected platform.",
       "compatibility": "strict",
+      "framework_compatibility": null,
       "resolution": {
         "status": "resolved",
         "environment": {
@@ -65,6 +66,7 @@ The schema version is `6`. Candidate resolution and later failures are represent
       },
       "phases": {
         "lock": "passed",
+        "artifact": "passed",
         "install": "failed",
         "runtime": "not-run",
         "framework": "not-run"
@@ -127,11 +129,11 @@ The schema version is `6`. Candidate resolution and later failures are represent
 
 The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. GPU metadata contains the selected device, NVIDIA driver version, and the CUDA maximum printed by `nvidia-smi`.
 
-Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, `phases`, and optional `resolution` and `failure` objects. The four phases are `lock`, `install`, `runtime`, and `framework`. Once locking succeeds, `resolution` retains the exact execution environment and resolved PyTorch packages even if a later phase fails.
+Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, `phases`, and optional `resolution`, `framework_compatibility`, and `failure` objects. The five phases are `lock`, `artifact`, `install`, `runtime`, and `framework`. Once locking succeeds, `resolution` retains the exact execution environment, PyTorch packages, and framework-related package versions even if a later phase fails.
 
-`blocking_summary` groups the same blocking package across candidates while preserving every attempt. It distinguishes “no candidate resolved” from “PyTorch resolved but a later package or validation failed.” Missing facts are JSON `null`; they are never guessed. Schema 6 removes the schema 5 `resolution_failure` and `candidate_failure_summary` fields.
+`blocking_summary` groups the same blocker across candidates while preserving every attempt, including candidates skipped after a conclusive failure. It distinguishes “no candidate resolved” from “PyTorch resolved but a later package or validation failed.” Missing facts are JSON `null`; they are never guessed.
 
-Schema 6 also records the executed `probe_contract`, automatic or explicit `framework_validation` trigger, filtered child-environment policy, scoped source anchors, and final operation state. A successful CUDA `validation` includes:
+Schema 7 also records the executed `probe_contract`, automatic or explicit `framework_validation` trigger, filtered child-environment policy, scoped source anchors, final operation state, and reviewed framework-catalog provenance. A successful CUDA `validation` includes:
 
 - resolved PyTorch CUDA runtime and runtime-component version;
 - required minimum driver and `strict`, `minor`, or `unsupported` classification;
@@ -139,6 +141,8 @@ Schema 6 also records the executed `probe_contract`, automatic or explicit `fram
 - CUDA tensor, cuBLAS, cuDNN, native architecture, NumPy, `torchvision`, `torchaudio`, and optional compile results.
 
 Candidate details use bounded, redacted summaries rather than raw command data. Full redacted uv output remains in the private log. Consumers should check `schema_version` before depending on fields.
+
+A framework failure uses its own structure instead of resolver fields. It can include `binary_requirement` (`required_cuda_variant`, `required_cuda_major`, needed libraries, and `catalog|elf|metadata|runtime` evidence), resolved framework `packages`, a bounded `exception`, `dependency_paths`, and `backend_independent`. For example, a missing `DTensor` is `framework-api-incompatibility`, while `libcudart.so.13` on `cu129` is `framework-cuda-abi`. Public exception data is limited to the type, redacted message, symbol or module names, consumer/provider packages, and at most 12 frames with basename-only paths.
 
 Possible status values are:
 

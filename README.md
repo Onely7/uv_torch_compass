@@ -82,6 +82,8 @@ uv-torch-compass plan --framework-probe vllm
 
 When the resolved graph contains `vllm`, the same bounded vLLM check runs automatically. `--framework-probe vllm` remains available when you want to request it explicitly. The check covers metadata, importability, the native extension, and the selected execution platform without downloading a model or starting workers.
 
+Before installing the complete candidate graph, uv-torch-compass extracts only the locked vLLM wheel when the active uv supports selective installation. It does not import or execute the wheel. Instead, it reads the native ELF metadata and compares required libraries such as `libcudart.so.13` with the PyTorch backend. Reviewed official-wheel facts supplement this inspection. A mismatch such as “vLLM requires CUDA 13, but `cu129` provides CUDA 12.9” is therefore reported before repeated multi-gigabyte installs. Python API failures such as an unavailable `DTensor` are reported separately from CUDA ABI failures.
+
 ## Safety at a glance
 
 - `plan` installs and tests candidates in temporary environments but does not change the target `pyproject.toml`, `uv.lock`, or project environment.
@@ -91,6 +93,7 @@ When the resolved graph contains `vllm`, the same bounded vLLM check runs automa
 - Writes use same-directory temporary files and atomic replacement. A workspace lock prevents two `apply` processes from updating together.
 - Lock, sync, final validation, timeout, SIGINT, and SIGTERM failures trigger file rollback and an environment recovery attempt.
 - Logs and JSON reports redact common credential forms and are created with private file permissions. If `apply` succeeds but a requested report cannot be written, the project remains applied and the command exits with `1` while reporting `applied: true`.
+- uv older than 0.11.28 produces an upgrade warning. When its selective-install flags are unavailable, only artifact preflight is skipped; the existing full install and runtime validation remain the safety fallback.
 
 Review `git diff` after `plan` and `apply`. Backups remain after success; [recovery and troubleshooting](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery.md) explains their names and limitations.
 

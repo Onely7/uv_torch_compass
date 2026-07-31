@@ -7,6 +7,18 @@ from typing import cast
 import pytest
 
 from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
+from uv_torch_compass.candidate_failures import (
+    BoundedExceptionReport,
+    FrameworkBinaryRequirement,
+    FrameworkCompatibilityDecision,
+    FrameworkCompatibilityEvidence,
+    FrameworkCompatibilityStatus,
+    FrameworkFailure,
+    FrameworkFailureKind,
+)
+from uv_torch_compass.candidate_failures import (
+    FailedPackage as FrameworkFailedPackage,
+)
 from uv_torch_compass.candidate_lock import CandidateLockSnapshot, LockedPackage
 from uv_torch_compass.candidate_resolution import CandidateResolution
 from uv_torch_compass.cuda_compatibility import CompatibilityPolicy
@@ -121,13 +133,14 @@ def test_json_report_is_single_document_and_private(tmp_path: Path, capsys) -> N
 
     captured = capsys.readouterr()
     document = json.loads(captured.out)
-    assert document["schema_version"] == 6
+    assert document["schema_version"] == 7
     assert document["status"] == "planned"
     assert document["changes"] == ["one change"]
     attempt = document["candidate_attempts"][0]
     assert attempt["resolution"]["pytorch"]["torch"]["version"] == "2.7.0"
     assert attempt["phases"] == {
         "lock": "passed",
+        "artifact": "passed",
         "install": "passed",
         "runtime": "passed",
         "framework": "not-run",
@@ -245,6 +258,63 @@ def test_text_report_explains_failed_candidate(tmp_path: Path, capsys) -> None:
     assert "Required by: vllm>=0.25.0 -> torch==2.10.0" in captured.out
     assert "Index: pytorch-cu121" in captured.out
     assert "Suggestion: Select a compatible vLLM version." in captured.out
+
+
+def test_report_explains_framework_cuda_abi_failure(tmp_path: Path, capsys) -> None:
+    requirement = FrameworkBinaryRequirement(
+        "vllm",
+        "0.26.0",
+        required_cuda_variant="cu130",
+        required_cuda_major=13,
+        needed_libraries=("libcudart.so.13",),
+        evidence=FrameworkCompatibilityEvidence.CATALOG,
+        source_url="https://pypi.org/simple",
+    )
+    decision = FrameworkCompatibilityDecision(
+        FrameworkCompatibilityStatus.INCOMPATIBLE,
+        "cu129",
+        "vLLM 0.26.0 requires CUDA 13",
+        requirement,
+    )
+    failure = FrameworkFailure(
+        FrameworkFailureKind.CUDA_ABI,
+        "vLLM 0.26.0 requires CUDA 13, but cu129 provides CUDA 12.9.",
+        "vllm",
+        "0.26.0",
+        FrameworkFailedPackage("vllm", "0.26.0", "vllm==0.26.0"),
+        (("project", "vllm==0.26.0"),),
+        requirement,
+        BoundedExceptionReport("ImportError", "libcudart.so.13 is unavailable"),
+        suggestions=("Update the NVIDIA driver.",),
+    )
+    reporter = CommandReporter(_text_options(tmp_path), "0.5.0")
+
+    with reporter:
+        reporter.emit_final(
+            CommandOutcome(
+                "failed",
+                False,
+                None,
+                attempts=(
+                    CandidateAttempt(
+                        "cu129",
+                        "artifact",
+                        "failed",
+                        failure.summary,
+                        "strict",
+                        failure,
+                        framework_compatibility=decision,
+                    ),
+                ),
+            ),
+            None,
+            exit_code=1,
+            error="no compatible vLLM artifact",
+        )
+
+    captured = capsys.readouterr()
+    assert "Framework requirement: cu130 (catalog)" in captured.out
+    assert "libcudart.so.13 is unavailable" in captured.out
 
 
 def test_text_report_limits_long_skipped_candidate_lists(

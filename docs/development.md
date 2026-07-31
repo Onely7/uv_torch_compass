@@ -63,16 +63,18 @@ Normal CI tests Python 3.10, 3.11, 3.12, 3.13, and 3.14 on Ubuntu. Separate whee
 | `CI` | Run the version matrix, pre-commit, ty, build, and wheel smoke tests. |
 | `CodeQL` | Analyze Python and Actions with `security-extended` queries and minimal permissions. |
 | `Real PyTorch CPU smoke test` | Manually install and validate the real CPU build in a temporary target project. |
-| `Transitive resolver smoke test` | Manually lock `vllm==0.19.1` with the official `cu126` index and verify transitive PyTorch sources without downloading packages or using a GPU. |
+| `Transitive resolver smoke test` | Manually lock vLLM with an official CUDA index, extract only its wheel, inspect its CUDA ABI, and verify transitive PyTorch sources without a GPU. |
 | `Build publication artifacts` | Manually build, smoke-test, and upload preparation artifacts without publishing. |
 | `Publish Python package` | Publish a manual build to TestPyPI or a published GitHub Release to PyPI through Trusted Publishing. |
 | `Release Please` | Maintain a Release PR, then create a version tag and GitHub Release when a human merges it. |
-| `CUDA compatibility catalog audit` | Check the NVIDIA source weekly and fail when the bundled catalog has not received a recent human review. |
+| `CUDA and framework compatibility catalog audit` | Check NVIDIA and reviewed vLLM sources, review dates, and published CUDA-related metadata each week. |
 | Dependabot | Check uv, GitHub Actions, and pre-commit dependencies weekly in separate groups. |
 
 Action references use full commit SHAs. Dependabot's `github-actions` ecosystem updates those pins. CUDA runtime validation still requires a Linux host or runner with an NVIDIA GPU.
 
-Run the transitive resolver workflow from **Actions → Transitive resolver smoke test → Run workflow**. The defaults exercise the acceptance fixture. Change the requirement or backend only when investigating another published combination. This workflow contacts PyPI and the official PyTorch index, but stops after `uv lock`; the offline unit suite remains the normal regression boundary.
+Run the transitive resolver workflow from **Actions → Transitive resolver smoke test → Run workflow**. The defaults exercise the acceptance fixture. Change the requirement or backend only when investigating another published combination. This workflow contacts PyPI and the official PyTorch index, locks the graph, downloads only the vLLM wheel for artifact inspection, and does not use a GPU. The offline unit suite remains the normal regression boundary.
+
+When changing the framework catalog, update the reviewed source URL and date together, add a synthetic ELF or metadata regression fixture, and run the catalog audit manually. Catalog entries apply only to exact versions from official PyPI. Unknown, custom, Git, local, and source builds must remain on the artifact/runtime path rather than inheriting official-wheel facts.
 
 ## Release management
 

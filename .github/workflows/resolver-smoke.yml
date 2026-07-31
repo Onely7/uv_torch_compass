@@ -95,6 +95,39 @@ jobs:
         env:
           TARGET_DIR: ${{ runner.temp }}/resolver-target
         run: uv lock --project "$TARGET_DIR" --python 3.12
+      - name: Extract and inspect only the locked vLLM wheel
+        env:
+          TARGET_DIR: ${{ runner.temp }}/resolver-target
+          VLLM_ENVIRONMENT: ${{ runner.temp }}/vllm-artifact
+        run: |
+          UV_PROJECT_ENVIRONMENT="$VLLM_ENVIRONMENT" uv sync \
+            --project "$TARGET_DIR" \
+            --python 3.12 \
+            --locked \
+            --no-install-project \
+            --no-dev \
+            --only-install-package vllm \
+            --no-build-package vllm
+          VLLM_ENVIRONMENT="$VLLM_ENVIRONMENT" uv run python - <<'PY'
+          import importlib.metadata
+          import os
+          from pathlib import Path
+
+          from uv_torch_compass.vllm_compatibility import inspect_vllm_native_libraries
+
+          environment = Path(os.environ["VLLM_ENVIRONMENT"])
+          distribution = importlib.metadata.Distribution.at(
+              next(environment.rglob("vllm-*.dist-info"))
+          )
+          requirement = inspect_vllm_native_libraries(
+              environment,
+              version=distribution.version,
+              source_url="https://pypi.org/simple",
+          )
+          print(f"vllm={distribution.version}")
+          print(f"required_cuda_major={requirement.required_cuda_major}")
+          print(f"evidence={requirement.evidence.value}")
+          PY
       - name: Verify the locked package identities
         env:
           BACKEND: ${{ inputs.backend }}
