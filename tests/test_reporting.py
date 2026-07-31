@@ -121,13 +121,14 @@ def test_json_report_is_single_document_and_private(tmp_path: Path, capsys) -> N
 
     captured = capsys.readouterr()
     document = json.loads(captured.out)
-    assert document["schema_version"] == 6
+    assert document["schema_version"] == 7
     assert document["status"] == "planned"
     assert document["changes"] == ["one change"]
     attempt = document["candidate_attempts"][0]
     assert attempt["resolution"]["pytorch"]["torch"]["version"] == "2.7.0"
     assert attempt["phases"] == {
         "lock": "passed",
+        "artifact": "passed",
         "install": "passed",
         "runtime": "passed",
         "framework": "not-run",

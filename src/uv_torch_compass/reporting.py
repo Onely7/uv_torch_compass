@@ -11,6 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
+from uv_torch_compass.candidate_failures import (
+    FrameworkFailure,
+    ResolutionFailure,
+)
 from uv_torch_compass.domain import CommandOutcome, OutputFormat, RunOptions
 from uv_torch_compass.errors import ProjectUpdateError, ReportError
 from uv_torch_compass.redaction import redact
@@ -284,7 +288,7 @@ def _result_document(
                 "reason": outcome.compatibility.reason,
             }
     return {
-        "schema_version": 6,
+        "schema_version": 7,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -314,6 +318,9 @@ def _result_document(
                 "compatibility": attempt.compatibility,
                 "failure": _failure_document(attempt.failure),
                 "resolution": _resolution_document(attempt.resolution),
+                "framework_compatibility": _framework_compatibility_document(
+                    attempt.framework_compatibility
+                ),
                 "phases": _phase_document(attempt.stage, attempt.status),
             }
             for attempt in outcome.attempts
@@ -366,6 +373,31 @@ def _failure_document(failure: Any) -> dict[str, Any] | None:
         if failure.package is not None
         else None
     )
+    if isinstance(failure, FrameworkFailure):
+        return {
+            "kind": failure.kind.value,
+            "summary": failure.summary,
+            "framework": failure.framework,
+            "framework_version": failure.framework_version,
+            "package": package,
+            "dependency_paths": [list(path) for path in failure.dependency_paths],
+            "binary_requirement": _binary_requirement_document(
+                failure.binary_requirement
+            ),
+            "exception": _bounded_exception_document(failure.exception),
+            "packages": [
+                {
+                    "name": item.name,
+                    "version": item.version,
+                    "source_url": item.source_url,
+                }
+                for item in failure.packages
+            ],
+            "suggestions": list(failure.suggestions),
+            "backend_independent": failure.backend_independent,
+        }
+    if not isinstance(failure, ResolutionFailure):
+        return None
     index = (
         {"name": failure.index.name, "url": failure.index.url}
         if failure.index is not None
@@ -381,6 +413,7 @@ def _failure_document(failure: Any) -> dict[str, Any] | None:
         "suggestions": list(failure.suggestions),
         "dependency_paths": [list(path) for path in failure.dependency_paths],
         "available_wheel_platforms": list(failure.available_wheel_platforms),
+        "backend_independent": False,
     }
 
 
@@ -404,12 +437,19 @@ def _resolution_document(resolution: Any) -> dict[str, Any] | None:
             }
             for package in resolution.pytorch_packages
         },
+        "framework_packages": {
+            package.name: {
+                "version": package.version,
+                "index": package.source_url,
+            }
+            for package in resolution.framework_packages
+        },
         "package_count": len(resolution.lock.packages),
     }
 
 
 def _phase_document(terminal_stage: str, status: str) -> dict[str, str]:
-    stages = ("lock", "install", "runtime", "framework")
+    stages = ("lock", "artifact", "install", "runtime", "framework")
     if status == "skipped":
         return dict.fromkeys(stages, "not-run")
     terminal_position = stages.index(terminal_stage)
@@ -452,11 +492,12 @@ def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
         package_version = (
             failure.package.version if failure.package is not None else None
         )
+        platform = failure.platform if isinstance(failure, ResolutionFailure) else None
         fingerprint = (
             failure.kind.value,
             package_name,
             package_version,
-            failure.platform,
+            platform,
             failure.dependency_paths,
         )
         blocker = blockers.setdefault(
@@ -465,9 +506,14 @@ def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
                 "kind": failure.kind.value,
                 "package": package_name,
                 "version": package_version,
-                "platform": failure.platform,
+                "platform": platform,
                 "dependency_paths": [list(path) for path in failure.dependency_paths],
                 "candidates": [],
+                "backend_independent": (
+                    failure.backend_independent
+                    if isinstance(failure, FrameworkFailure)
+                    else False
+                ),
             },
         )
         blocker["candidates"].append(attempt.backend)
@@ -482,6 +528,53 @@ def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
         "pytorch_builds_found": resolved_builds,
         "common_blockers": list(blockers.values()),
         "suggestions": list(dict.fromkeys(suggestions)),
+    }
+
+
+def _framework_compatibility_document(decision: Any) -> dict[str, Any] | None:
+    if decision is None:
+        return None
+    return {
+        "status": decision.status.value,
+        "candidate_backend": decision.candidate_backend,
+        "summary": decision.summary,
+        "requirement": _binary_requirement_document(decision.requirement),
+    }
+
+
+def _binary_requirement_document(requirement: Any) -> dict[str, Any] | None:
+    if requirement is None:
+        return None
+    return {
+        "framework": requirement.framework,
+        "version": requirement.version,
+        "required_cuda_variant": requirement.required_cuda_variant,
+        "required_cuda_major": requirement.required_cuda_major,
+        "needed_libraries": list(requirement.needed_libraries),
+        "evidence": requirement.evidence.value,
+        "source_url": requirement.source_url,
+    }
+
+
+def _bounded_exception_document(exception: Any) -> dict[str, Any] | None:
+    if exception is None:
+        return None
+    return {
+        "type": exception.exception_type,
+        "message": exception.message,
+        "missing_symbol": exception.missing_symbol,
+        "missing_module": exception.missing_module,
+        "consumer_package": exception.consumer_package,
+        "provider_package": exception.provider_package,
+        "frames": [
+            {
+                "module": frame.module,
+                "filename": frame.filename,
+                "function": frame.function,
+                "line_number": frame.line_number,
+            }
+            for frame in exception.frames
+        ],
     }
 
 
@@ -523,6 +616,24 @@ def _print_failed_attempt(attempt: dict[str, Any]) -> None:
     if failure.get("available_wheel_platforms"):
         print(
             "    Available wheels: " + ", ".join(failure["available_wheel_platforms"]),
+            file=sys.stdout,
+        )
+    requirement = failure.get("binary_requirement")
+    if isinstance(requirement, dict):
+        required = requirement.get("required_cuda_variant") or (
+            f"CUDA {requirement['required_cuda_major']}"
+            if requirement.get("required_cuda_major") is not None
+            else "unknown CUDA variant"
+        )
+        print(
+            f"    Framework requirement: {required} "
+            f"({requirement.get('evidence', 'unknown')})",
+            file=sys.stdout,
+        )
+    exception = failure.get("exception")
+    if isinstance(exception, dict) and exception.get("message"):
+        print(
+            f"    Exception: {exception.get('type', 'Error')}: {exception['message']}",
             file=sys.stdout,
         )
     for suggestion in failure.get("suggestions", []):

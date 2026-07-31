@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
+from uv_torch_compass.candidate_failures import (
+    FailedPackage,
+    FrameworkCompatibilityDecision,
+    FrameworkFailure,
+    FrameworkFailureKind,
+)
 from uv_torch_compass.candidate_lock import read_candidate_lock
 from uv_torch_compass.candidate_project import render_candidate_project
 from uv_torch_compass.candidate_resolution import CandidateResolution
@@ -26,7 +32,6 @@ from uv_torch_compass.domain import (
     BackendCandidate,
     CandidateAttempt,
     FailedIndex,
-    FailedPackage,
     FrameworkProbe,
     ProbeProfile,
     ProjectRequirements,
@@ -39,6 +44,12 @@ from uv_torch_compass.errors import (
     CommandTimeoutError,
     ConfigurationError,
     ProbeError,
+)
+from uv_torch_compass.framework_artifact import FrameworkArtifactInspector
+from uv_torch_compass.framework_diagnostics import (
+    artifact_failure,
+    catalog_dependency_failure,
+    validation_failure,
 )
 from uv_torch_compass.framework_validation import (
     FrameworkValidation,
@@ -85,6 +96,12 @@ class CandidateProbeService:
     execution_environment: CandidateExecutionEnvironment
     workspace_members: tuple[tuple[str, Path], ...] = ()
     framework_probes: tuple[FrameworkProbe, ...] = ()
+    _artifact_inspector: FrameworkArtifactInspector | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _artifact_fallback_warned: bool = field(default=False, init=False, repr=False)
 
     def find_working_candidate(
         self,
@@ -98,7 +115,25 @@ class CandidateProbeService:
             CommandError: If every candidate fails installation or runtime checks.
         """
         attempts = list(prior_attempts)
+        required_backend: str | None = None
+        required_cuda_major: int | None = None
         for candidate in candidates:
+            skip_reason = _framework_candidate_skip_reason(
+                candidate,
+                required_backend=required_backend,
+                required_cuda_major=required_cuda_major,
+            )
+            if skip_reason is not None:
+                attempts.append(
+                    CandidateAttempt(
+                        candidate.value,
+                        "artifact",
+                        "skipped",
+                        skip_reason,
+                        "incompatible",
+                    )
+                )
+                continue
             result = self._probe_candidate(candidate)
             if result.outcome is None:
                 failure = result.failure
@@ -113,8 +148,24 @@ class CandidateProbeService:
                         self._compatibility_for(candidate).level.value,
                         failure,
                         result.resolution,
+                        result.framework_compatibility,
                     )
                 )
+                if isinstance(failure, FrameworkFailure):
+                    requirement = failure.binary_requirement
+                    if failure.backend_independent:
+                        attempts.extend(
+                            _skipped_framework_attempts(
+                                candidates,
+                                candidate,
+                                "the same backend-independent framework failure "
+                                "would affect this candidate",
+                            )
+                        )
+                        break
+                    if requirement is not None:
+                        required_backend = requirement.required_cuda_variant
+                        required_cuda_major = requirement.required_cuda_major
                 continue
             outcome = result.outcome
             attempts.append(
@@ -125,6 +176,7 @@ class CandidateProbeService:
                     f"resolved as {outcome.runtime.backend.value}",
                     outcome.compatibility.level.value,
                     resolution=outcome.resolution,
+                    framework_compatibility=outcome.framework_compatibility,
                 )
             )
             if outcome.compatibility.level is CompatibilityLevel.MINOR:
@@ -138,6 +190,7 @@ class CandidateProbeService:
                 outcome.source_anchors,
                 outcome.framework_validation,
                 outcome.resolution,
+                outcome.framework_compatibility,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         if any(attempt.resolution is not None for attempt in attempts):
@@ -164,6 +217,13 @@ class CandidateProbeService:
         if isinstance(prepared, CandidateProbeResult):
             return prepared
         resolution, project_dir = prepared
+        artifact = self._preflight_framework_artifact(
+            resolution,
+            project_dir,
+            candidate,
+        )
+        if isinstance(artifact, CandidateProbeResult):
+            return artifact
         try:
             installed = self.uv.sync_locked_candidate(
                 venv,
@@ -234,6 +294,7 @@ class CandidateProbeService:
                 outcome,
                 resolution,
                 installed_distributions,
+                artifact,
             )
         self.reporter.detail(validation.stdout + validation.stderr)
         if "NUMPY_BRIDGE_FAILED" not in validation.stderr:
@@ -282,7 +343,87 @@ class CandidateProbeService:
             outcome,
             resolution,
             installed_distributions,
+            artifact,
         )
+
+    def _preflight_framework_artifact(
+        self,
+        resolution: CandidateResolution,
+        project_dir: Path,
+        candidate: BackendCandidate,
+    ) -> FrameworkCompatibilityDecision | None | CandidateProbeResult:
+        """Inspect vLLM wheel requirements before installing its dependency graph."""
+        inspector = self._framework_artifact_inspector()
+        try:
+            preflight, command = inspector.inspect(resolution, project_dir)
+        except CommandTimeoutError:
+            return CandidateProbeResult.failed(
+                timeout_failure("framework artifact inspection"),
+                resolution,
+                stage="artifact",
+            )
+        except ProbeError as exc:
+            failure = FrameworkFailure(
+                FrameworkFailureKind.METADATA,
+                f"vLLM artifact inspection failed safely: {exc}",
+                "vllm",
+                _locked_version(resolution, "vllm"),
+                FailedPackage("vllm", _locked_version(resolution, "vllm"), "vllm"),
+                resolution.dependency_paths("vllm"),
+                packages=(),
+                suggestions=(
+                    "Verify that the locked vLLM wheel is complete and from a trusted source.",
+                ),
+            )
+            return CandidateProbeResult.failed(failure, resolution, stage="artifact")
+        if command is not None:
+            self.reporter.detail(command.stdout + command.stderr)
+        if (
+            preflight.status in {"unsupported-uv", "wheel-unavailable"}
+            and not self._artifact_fallback_warned
+        ):
+            self.reporter.warn(
+                f"candidate {candidate.value}: {preflight.detail}; "
+                "continuing with full runtime validation"
+            )
+            self._artifact_fallback_warned = True
+        decision = preflight.decision
+        if decision is not None and not decision.allowed:
+            failure = artifact_failure(resolution, decision)
+            self.reporter.warn(f"candidate {candidate.value}: {failure.summary}")
+            return CandidateProbeResult.failed(
+                failure,
+                resolution,
+                stage="artifact",
+                framework_compatibility=decision,
+            )
+        advisory_failure = catalog_dependency_failure(resolution)
+        if advisory_failure is not None:
+            self.reporter.warn(
+                f"candidate {candidate.value}: {advisory_failure.summary}"
+            )
+            return CandidateProbeResult.failed(
+                advisory_failure,
+                resolution,
+                stage="artifact",
+                framework_compatibility=decision,
+            )
+        return decision
+
+    def _framework_artifact_inspector(self) -> FrameworkArtifactInspector:
+        """Return the run-scoped artifact inspector and cached uv capabilities."""
+        if self._artifact_inspector is None:
+            capability_method = getattr(self.uv, "sync_capabilities", None)
+            capabilities = (
+                capability_method() if callable(capability_method) else frozenset()
+            )
+            self._artifact_inspector = FrameworkArtifactInspector(
+                self.uv,
+                self.temporary_root,
+                self.project_python,
+                capabilities,
+            )
+        return self._artifact_inspector
 
     def _resolve_candidate(
         self,
@@ -406,6 +547,7 @@ class CandidateProbeService:
         outcome: ProbeOutcome | None,
         resolution: CandidateResolution,
         installed_distributions: tuple[InstalledDistribution, ...],
+        framework_compatibility: FrameworkCompatibilityDecision | None,
     ) -> CandidateProbeResult:
         if outcome is None:
             return CandidateProbeResult.failed(
@@ -431,6 +573,7 @@ class CandidateProbeService:
                 outcome.source_anchors,
                 framework_probes,
                 resolution,
+                framework_compatibility,
             )
         )
 
@@ -456,8 +599,10 @@ class CandidateProbeService:
             "--expected-backend",
             candidate.value,
         ]
-        for framework in requested:
+        for framework in self.framework_probes:
             arguments.extend(["--framework", framework.value])
+        if automatic:
+            arguments.append("--auto-detect")
         environment, _ = sanitized_environment(os.environ)
         try:
             result = self.runner.run(
@@ -475,8 +620,9 @@ class CandidateProbeService:
         try:
             validations = parse_framework_probe(
                 result.stdout,
-                requested,
+                self.framework_probes,
                 allow_automatic=True,
+                require_success=False,
             )
         except ProbeError as exc:
             self.reporter.warn(f"candidate {candidate.value}: {exc}")
@@ -485,9 +631,21 @@ class CandidateProbeService:
                 resolution,
                 stage="framework",
             )
-        if result.returncode != 0:
+        failed = next(
+            (validation for validation in validations if validation.status != "PASS"),
+            None,
+        )
+        if failed is not None or result.returncode != 0:
+            if failed is None:
+                return CandidateProbeResult.failed(
+                    runtime_failure(
+                        "The framework probe exited without a failure result."
+                    ),
+                    resolution,
+                    stage="framework",
+                )
             return CandidateProbeResult.failed(
-                runtime_failure("The candidate framework validation failed."),
+                validation_failure(failed, resolution),
                 resolution,
                 stage="framework",
             )
@@ -597,3 +755,52 @@ def _requirement_name(raw_value: str) -> str:
         return str(canonicalize_name(Requirement(raw_value).name))
     except InvalidRequirement:
         return ""
+
+
+def _locked_version(resolution: CandidateResolution, package: str) -> str:
+    locked = resolution.lock.package(package)
+    return locked.version if locked is not None else "unknown"
+
+
+def _framework_candidate_skip_reason(
+    candidate: BackendCandidate,
+    *,
+    required_backend: str | None,
+    required_cuda_major: int | None,
+) -> str | None:
+    if required_backend is not None and candidate.value != required_backend:
+        return f"vLLM requires {required_backend}; this candidate was not installed"
+    if required_cuda_major is None:
+        return None
+    if not candidate.is_cuda or _cuda_major(candidate.value) != required_cuda_major:
+        return f"vLLM requires CUDA {required_cuda_major}; this candidate was not installed"
+    return None
+
+
+def _cuda_major(backend: str) -> int | None:
+    digits = backend.removeprefix("cu")
+    return int(digits[:-1]) if digits.isdigit() and len(digits) in {2, 3} else None
+
+
+def _skipped_framework_attempts(
+    candidates: tuple[BackendCandidate, ...],
+    current: BackendCandidate,
+    reason: str,
+) -> tuple[CandidateAttempt, ...]:
+    found_current = False
+    skipped: list[CandidateAttempt] = []
+    for candidate in candidates:
+        if not found_current:
+            if candidate is current:
+                found_current = True
+            continue
+        skipped.append(
+            CandidateAttempt(
+                candidate.value,
+                "framework",
+                "skipped",
+                reason,
+                "not-tested",
+            )
+        )
+    return tuple(skipped)

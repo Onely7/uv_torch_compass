@@ -130,8 +130,8 @@ def test_redacts_and_bounds_untrusted_uv_output() -> None:
     assert "query-secret" not in serialized
 
 
-def test_characterizes_article_as_an_opaque_uv_package_name() -> None:
-    """Record the parser bug before replacing the broad prose expression."""
+def test_article_is_not_accepted_as_an_opaque_uv_package_name() -> None:
+    """Do not mistake English prose for a distribution identity."""
     failure = interpret_uv_failure(
         "Because no version of the package can be used, the requirements "
         "are unsatisfiable.",
@@ -139,5 +139,4 @@ def test_characterizes_article_as_an_opaque_uv_package_name() -> None:
         dependency_roots=("example",),
     )
 
-    assert failure.package is not None
-    assert failure.package.name == "the"
+    assert failure.package is None

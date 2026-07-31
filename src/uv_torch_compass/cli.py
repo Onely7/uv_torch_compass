@@ -185,7 +185,7 @@ def _add_selection_options(parser: argparse.ArgumentParser) -> None:
 def _emit_early_failure(namespace: argparse.Namespace, message: str) -> None:
     if getattr(namespace, "output_format", None) == "json":
         document = {
-            "schema_version": 6,
+            "schema_version": 7,
             "operation": getattr(namespace, "operation", ""),
             "status": "failed",
             "exit_code": 1,

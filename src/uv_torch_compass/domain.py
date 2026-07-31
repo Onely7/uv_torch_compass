@@ -16,8 +16,10 @@ from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from uv_torch_compass.candidate_failures import (
+    CandidateFailure,
     FailedIndex,
     FailedPackage,
+    FrameworkCompatibilityDecision,
     ResolutionFailure,
     ResolutionFailureKind,
 )
@@ -586,8 +588,9 @@ class CandidateAttempt:
     status: str
     reason: str
     compatibility: str
-    failure: ResolutionFailure | None = None
+    failure: CandidateFailure | None = None
     resolution: CandidateResolution | None = None
+    framework_compatibility: FrameworkCompatibilityDecision | None = None
 
 
 @dataclass(frozen=True, slots=True)

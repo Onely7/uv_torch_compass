@@ -482,10 +482,10 @@ def test_probe_auto_validates_installed_vllm(tmp_path: Path) -> None:
     assert outcome.framework_validation[0].trigger == "automatic"
 
 
-def test_characterizes_automatic_vllm_as_an_explicit_probe_argument(
+def test_automatic_vllm_uses_auto_detect_probe_argument(
     tmp_path: Path,
 ) -> None:
-    """Record how candidate auto-detection currently loses its trigger."""
+    """Keep automatically detected vLLM distinct from an explicit request."""
 
     class VllmUv(ProbeUv):
         def sync_locked_candidate(
@@ -532,14 +532,14 @@ def test_characterizes_automatic_vllm_as_an_explicit_probe_argument(
     service.find_working_candidate((BackendCandidate("cpu"),))
 
     framework_arguments = runner.arguments[-1]
-    assert "--framework" in framework_arguments
-    assert "--auto-detect" not in framework_arguments
+    assert "--framework" not in framework_arguments
+    assert "--auto-detect" in framework_arguments
 
 
-def test_characterizes_framework_failure_as_runtime_failure_and_retries(
+def test_framework_api_failure_is_structured_and_stops_repeated_candidates(
     tmp_path: Path,
 ) -> None:
-    """Record the generic failure kind and repeated candidate work."""
+    """Stop candidate work after a backend-independent framework failure."""
 
     class VllmUv(ProbeUv):
         def sync_locked_candidate(
@@ -549,9 +549,9 @@ def test_characterizes_framework_failure_as_runtime_failure_and_retries(
             python: Path,
         ) -> CommandResult:
             result = super().sync_locked_candidate(path, project_dir, python)
-            metadata = path / "lib/python/site-packages/vllm-0.6.dist-info/METADATA"
+            metadata = path / "lib/python/site-packages/vllm-0.19.dist-info/METADATA"
             metadata.parent.mkdir(parents=True, exist_ok=True)
-            metadata.write_text("Name: vllm\nVersion: 0.6.0\n", encoding="utf-8")
+            metadata.write_text("Name: vllm\nVersion: 0.19.1\n", encoding="utf-8")
             return result
 
     def framework_document(status: str, error: str) -> str:
@@ -562,7 +562,7 @@ def test_characterizes_framework_failure_as_runtime_failure_and_retries(
                     {
                         "framework": "vllm",
                         "status": status,
-                        "version": "0.6.0",
+                        "version": "0.19.1",
                         "import_test": "FAIL" if status == "FAIL" else "PASS",
                         "native_extension_test": (
                             "FAIL" if status == "FAIL" else "PASS"
@@ -598,14 +598,17 @@ def test_characterizes_framework_failure_as_runtime_failure_and_retries(
         ProbeReporter(),
     )
 
-    outcome = service.find_working_candidate(
-        (BackendCandidate("cpu"), BackendCandidate("cpu"))
-    )
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate(
+            (BackendCandidate("cpu"), BackendCandidate("cpu"))
+        )
 
-    assert len(outcome.attempts) == 2
-    assert outcome.attempts[0].failure is not None
-    assert outcome.attempts[0].failure.kind.value == "runtime-validation"
-    assert outcome.attempts[1].status == "passed"
+    attempts = captured.value.attempts
+    assert len(attempts) == 2
+    assert attempts[0].failure is not None
+    assert attempts[0].failure.kind.value == "framework-api-incompatibility"
+    assert attempts[1].status == "skipped"
+    assert len(runner.arguments) == 2
 
 
 def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
@@ -649,6 +652,56 @@ def test_install_failure_reports_a_resolved_build_before_the_blocker(
         service.find_working_candidate((BackendCandidate("cu121"),))
 
     assert reporter.warnings == ["candidate cu121: installation failed"]
+
+
+def test_vllm_catalog_rejects_cuda_mismatch_before_full_install(
+    tmp_path: Path,
+) -> None:
+    class Vllm026Uv(ProbeUv):
+        def __init__(self) -> None:
+            super().__init__()
+            self.full_installs = 0
+
+        def lock_candidate(self, project_dir: Path, python: Path) -> CommandResult:
+            result = super().lock_candidate(project_dir, python)
+            lock = project_dir / "uv.lock"
+            lock.write_text(
+                lock.read_text(encoding="utf-8").replace(
+                    'name = "vllm"\nversion = "0.19.1"',
+                    'name = "vllm"\nversion = "0.26.0"',
+                ),
+                encoding="utf-8",
+            )
+            return result
+
+        def sync_locked_candidate(
+            self, path: Path, project_dir: Path, python: Path
+        ) -> CommandResult:
+            self.full_installs += 1
+            return super().sync_locked_candidate(path, project_dir, python)
+
+    uv = Vllm026Uv()
+    service = _service(tmp_path, uv, ProbeRunner([]), ProbeReporter())
+    service.requirements = ProjectRequirements(
+        ">=3.12",
+        "",
+        (ScopedRequirement(Scope("base"), "vllm==0.26.0"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate(
+            (BackendCandidate("cu129"), BackendCandidate("cu128"))
+        )
+
+    attempts = captured.value.attempts
+    assert attempts[0].stage == "artifact"
+    assert attempts[0].failure is not None
+    assert attempts[0].failure.kind.value == "framework-cuda-abi"
+    assert attempts[1].status == "skipped"
+    assert "cu130" in attempts[1].reason
+    assert uv.full_installs == 0
 
 
 def test_install_failure_preserves_structured_resolution_context(

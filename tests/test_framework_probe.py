@@ -73,7 +73,7 @@ def test_main_emits_one_json_document(monkeypatch, capsys) -> None:
 
     document = json.loads(capsys.readouterr().out)
     assert status == 0
-    assert document["schema_version"] == 1
+    assert document["schema_version"] == 2
     assert document["results"][0]["framework"] == "vllm"
     assert document["results"][0]["trigger"] == "explicit"
 

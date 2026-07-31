@@ -20,6 +20,16 @@ from uv_torch_compass.errors import ProbeError
 from uv_torch_compass.redaction import redact
 
 _MAX_LOCK_BYTES = 32 * 1024 * 1024
+_MAX_ARTIFACTS_PER_PACKAGE = 512
+
+
+@dataclass(frozen=True, slots=True)
+class LockedArtifact:
+    """Identify one immutable wheel artifact recorded by uv."""
+
+    url: str
+    hash: str
+    size: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +40,8 @@ class LockedPackage:
     version: str
     source_url: str
     dependencies: tuple[str, ...]
+    source_kind: str = "registry"
+    wheels: tuple[LockedArtifact, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,17 +160,56 @@ def _parse_package(value: object) -> LockedPackage:
     source = value.get("source", {})
     if not isinstance(source, Mapping):
         raise ProbeError(f"candidate lockfile package {name!r} has an invalid source")
-    source_url = source.get("registry", "")
+    source_kind, source_url = _source_identity(cast(Mapping[str, object], source))
     if not isinstance(source_url, str):
         raise ProbeError(
-            f"candidate lockfile package {name!r} has an invalid registry URL"
+            f"candidate lockfile package {name!r} has an invalid source identity"
+        )
+    raw_wheels = value.get("wheels", [])
+    if not isinstance(raw_wheels, list):
+        raise ProbeError(f"candidate lockfile package {name!r} has invalid wheels")
+    if len(raw_wheels) > _MAX_ARTIFACTS_PER_PACKAGE:
+        raise ProbeError(
+            f"candidate lockfile package {name!r} has too many wheel artifacts"
         )
     return LockedPackage(
         str(canonicalize_name(name)),
         version,
         redact(source_url),
         tuple(_dependency_name(item, package=name) for item in dependencies),
+        source_kind,
+        tuple(_parse_artifact(item, package=name) for item in raw_wheels),
     )
+
+
+def _source_identity(source: Mapping[str, object]) -> tuple[str, object]:
+    for kind in ("registry", "url", "git", "path", "editable", "virtual"):
+        if kind in source:
+            return kind, source[kind]
+    return "unknown", ""
+
+
+def _parse_artifact(value: object, *, package: str) -> LockedArtifact:
+    if not isinstance(value, Mapping):
+        raise ProbeError(
+            f"candidate lockfile package {package!r} has a non-table wheel artifact"
+        )
+    url = value.get("url")
+    hash_value = value.get("hash")
+    size = value.get("size")
+    if not isinstance(url, str) or not url:
+        raise ProbeError(
+            f"candidate lockfile package {package!r} has an invalid wheel URL"
+        )
+    if not isinstance(hash_value, str) or not hash_value.startswith("sha256:"):
+        raise ProbeError(
+            f"candidate lockfile package {package!r} has an invalid wheel hash"
+        )
+    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+        raise ProbeError(
+            f"candidate lockfile package {package!r} has an invalid wheel size"
+        )
+    return LockedArtifact(redact(url), hash_value, size)
 
 
 def _dependency_name(value: object, *, package: str) -> str:

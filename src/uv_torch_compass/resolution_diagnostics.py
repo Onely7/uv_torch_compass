@@ -62,6 +62,9 @@ _REGISTRY_MISSING = re.compile(
     re.IGNORECASE,
 )
 _WHEEL_PLATFORM = re.compile(r"`([^`\n]+)`")
+_NON_PACKAGE_WORDS = frozenset(
+    {"a", "an", "the", "this", "that", "these", "those", "following"}
+)
 
 
 def interpret_uv_failure(
@@ -346,9 +349,12 @@ def _distribution_suggestions(
 
 def _parse_requirement(value: str) -> Requirement | None:
     try:
-        return Requirement(value.rstrip(".;"))
+        requirement = Requirement(value.rstrip(".;"))
     except InvalidRequirement:
         return None
+    if str(canonicalize_name(requirement.name)) in _NON_PACKAGE_WORDS:
+        return None
+    return requirement
 
 
 def _requirement_name(value: str) -> str | None:

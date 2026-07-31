@@ -51,7 +51,7 @@ def test_parses_requested_framework_validation() -> None:
     [
         ("", "no result"),
         ("not-json", "valid JSON"),
-        ('{"schema_version": 2}', "schema"),
+        ('{"schema_version": 3}', "schema"),
         ('{"schema_version": 1, "results": {}}', "array"),
         ('{"schema_version": 1, "results": ["invalid"]}', "object"),
         (
@@ -104,3 +104,79 @@ def test_accepts_automatic_framework_results_when_enabled() -> None:
     )
 
     assert validations[0].trigger == "automatic"
+
+
+def test_schema_two_parses_bounded_exception_and_package_versions() -> None:
+    output = json.dumps(
+        {
+            "schema_version": 2,
+            "results": [
+                {
+                    "framework": "vllm",
+                    "status": "FAIL",
+                    "version": "0.6.0",
+                    "import_test": "FAIL",
+                    "native_extension_test": "FAIL",
+                    "platform_test": "FAIL",
+                    "platform": "unknown",
+                    "error": "ImportError: cannot import DTensor",
+                    "trigger": "automatic",
+                    "exception": {
+                        "type": "ImportError",
+                        "message": "cannot import DTensor",
+                        "missing_symbol": "DTensor",
+                        "missing_module": None,
+                        "consumer_package": "transformers",
+                        "provider_package": "torch",
+                        "frames": [
+                            {
+                                "module": "transformers",
+                                "filename": "modeling_utils.py",
+                                "function": "<module>",
+                                "line_number": 10,
+                            }
+                        ],
+                    },
+                    "packages": [
+                        {
+                            "name": "transformers",
+                            "version": "5.14.1",
+                            "source_url": "https://pypi.org/simple",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    results = parse_framework_probe(
+        output,
+        (),
+        allow_automatic=True,
+        require_success=False,
+    )
+    document = framework_validation_document(results)
+
+    assert results[0].exception is not None
+    assert results[0].exception.frames[0].filename == "modeling_utils.py"
+    assert results[0].packages[0].name == "transformers"
+    assert document[0]["exception"]["missing_symbol"] == "DTensor"
+    assert document[0]["packages"][0]["version"] == "5.14.1"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("exception", [], "exception must be an object"),
+        ("packages", {}, "package versions must be an array"),
+    ],
+)
+def test_schema_two_rejects_invalid_nested_values(
+    field: str, value: object, message: str
+) -> None:
+    raw = json.loads(_output())
+    raw["schema_version"] = 2
+    raw["results"][0][field] = value
+
+    with pytest.raises(ProbeError, match=message):
+        parse_framework_probe(json.dumps(raw), (FrameworkProbe.VLLM,))
