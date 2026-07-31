@@ -95,3 +95,30 @@ def test_lock_snapshot_rejects_oversized_input(tmp_path: Path) -> None:
 
     with pytest.raises(ProbeError, match="32 MiB"):
         read_candidate_lock(lock)
+
+
+def test_lock_snapshot_currently_rejects_wheel_without_size(
+    tmp_path: Path,
+) -> None:
+    """Characterize the lock parser regression fixed by the next change."""
+    lock = tmp_path / "uv.lock"
+    _write_lock(
+        lock,
+        """
+[[package]]
+name = "uv-torch-compass-candidate"
+version = "0"
+dependencies = [{ name = "torch" }]
+
+[[package]]
+name = "torch"
+version = "2.4.0+cu121"
+source = { registry = "https://download.pytorch.org/whl/cu121" }
+wheels = [
+    { url = "https://download.pytorch.org/whl/cu121/torch.whl", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+]
+""",
+    )
+
+    with pytest.raises(ProbeError, match="invalid wheel size"):
+        read_candidate_lock(lock)

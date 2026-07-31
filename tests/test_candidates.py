@@ -662,8 +662,10 @@ def test_vllm_catalog_rejects_cuda_mismatch_before_full_install(
         def __init__(self) -> None:
             super().__init__()
             self.full_installs = 0
+            self.lock_calls = 0
 
         def lock_candidate(self, project_dir: Path, python: Path) -> CommandResult:
+            self.lock_calls += 1
             result = super().lock_candidate(project_dir, python)
             lock = project_dir / "uv.lock"
             lock.write_text(
@@ -703,6 +705,60 @@ def test_vllm_catalog_rejects_cuda_mismatch_before_full_install(
     assert attempts[1].status == "skipped"
     assert "cu130" in attempts[1].reason
     assert uv.full_installs == 0
+    # The second lock only converges transitive PyTorch source anchors; the
+    # rejected vLLM version itself is never changed and resolved again.
+    assert uv.lock_calls == 2
+
+
+def test_exact_vllm_requirement_is_currently_locked_before_catalog_filtering(
+    tmp_path: Path,
+) -> None:
+    """Characterize exact vLLM filtering after, rather than before, each lock."""
+
+    class Vllm060Uv(ProbeUv):
+        def __init__(self) -> None:
+            super().__init__(install_codes=[1])
+            self.locked_indexes: list[str] = []
+
+        def lock_candidate(self, project_dir: Path, python: Path) -> CommandResult:
+            document = tomllib.loads(
+                (project_dir / "pyproject.toml").read_text(encoding="utf-8")
+            )
+            self.locked_indexes.append(
+                document["tool"]["uv"]["sources"]["torch"]["index"]
+            )
+            result = super().lock_candidate(project_dir, python)
+            lock = project_dir / "uv.lock"
+            lock.write_text(
+                lock.read_text(encoding="utf-8").replace(
+                    'name = "vllm"\nversion = "0.19.1"',
+                    'name = "vllm"\nversion = "0.6.0"',
+                ),
+                encoding="utf-8",
+            )
+            return result
+
+    uv = Vllm060Uv()
+    service = _service(tmp_path, uv, ProbeRunner([]), ProbeReporter())
+    service.requirements = ProjectRequirements(
+        ">=3.12",
+        "",
+        (ScopedRequirement(Scope("base"), "vllm==0.6.0"),),
+        (),
+        (Scope("base"),),
+    )
+
+    with pytest.raises(CandidateResolutionError):
+        service.find_working_candidate(
+            (BackendCandidate("cu124"), BackendCandidate("cu121"))
+        )
+
+    assert uv.locked_indexes == [
+        "pytorch-cu124",
+        "pytorch-cu124",
+        "pytorch-cu121",
+        "pytorch-cu121",
+    ]
 
 
 def test_install_failure_preserves_structured_resolution_context(
