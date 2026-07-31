@@ -301,7 +301,9 @@ def _package_from_failure(output: str) -> FailedPackage | None:
             return _failed_package(requirement)
     index_match = _FOUND_ON_INDEX.search(output)
     if index_match is not None:
-        return FailedPackage(str(canonicalize_name(index_match.group("package"))))
+        name = str(canonicalize_name(index_match.group("package")))
+        if name not in _NON_PACKAGE_WORDS:
+            return FailedPackage(name)
     return None
 
 

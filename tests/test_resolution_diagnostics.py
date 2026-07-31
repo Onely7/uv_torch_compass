@@ -140,3 +140,13 @@ def test_article_is_not_accepted_as_an_opaque_uv_package_name() -> None:
     )
 
     assert failure.package is None
+
+
+def test_article_from_index_prose_is_not_accepted_as_a_package_name() -> None:
+    failure = interpret_uv_failure(
+        "the was found on https://pypi.org/simple, but resolution still failed",
+        candidate=BackendCandidate("cpu"),
+        dependency_roots=("example",),
+    )
+
+    assert failure.package is None
