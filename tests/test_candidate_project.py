@@ -127,6 +127,39 @@ def test_candidate_limits_python_and_declares_concrete_environment_policy(
     ]
 
 
+def test_candidate_adds_bounded_vllm_exclusions(tmp_path: Path) -> None:
+    target = tmp_path / "pyproject.toml"
+    _write(
+        target,
+        """
+        [project]
+        name = "target"
+        version = "1"
+
+        [tool.uv]
+        constraint-dependencies = ["numpy<3"]
+        """,
+    )
+
+    rendered = render_candidate_project(
+        target,
+        destination=tmp_path / "candidate",
+        requirements=("vllm>=0.19.1", "torch"),
+        candidate=BackendCandidate("cu128"),
+        environment=_ENVIRONMENT,
+        workspace_members={},
+        vllm_exclusions=("0.26.0", "0.25.1"),
+    )
+
+    with rendered.open("rb") as stream:
+        document = tomllib.load(stream)
+    assert document["tool"]["uv"]["constraint-dependencies"] == [
+        "numpy<3",
+        "vllm!=0.26.0",
+        "vllm!=0.25.1",
+    ]
+
+
 def test_nightly_candidate_allows_prereleases_and_reuses_official_index(
     tmp_path: Path,
 ) -> None:

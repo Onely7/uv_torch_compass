@@ -224,6 +224,7 @@ class CompassApplication:
             numpy_lt2_required=verified.numpy_lt2_required,
             managed_anchors=verified.source_anchors,
             required_environment=RequiredEnvironment.current_linux().marker,
+            framework_version_selection=verified.framework_version_selection,
         )
         planned_diff = _unified_diff(self.options.pyproject, original, updated)
         metadata = _metadata(python, nvidia)
@@ -251,6 +252,14 @@ class CompassApplication:
         metadata["framework_validation"] = framework_validation_document(
             verified.framework_validation
         )
+        if verified.framework_version_selection is not None:
+            selection = verified.framework_version_selection
+            metadata["framework_version_selection"] = {
+                "package": selection.package,
+                "requested": selection.requested,
+                "resolved_version": selection.resolved_version,
+                "rejected_versions": list(selection.rejected_versions),
+            }
         metadata["environment_policy"] = {
             "removed_control_variables": list(self.uv.removed_environment_names),
             "project_sources_preserved": True,

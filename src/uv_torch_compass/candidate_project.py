@@ -47,6 +47,7 @@ def render_candidate_project(
     candidate: BackendCandidate,
     environment: CandidateExecutionEnvironment,
     workspace_members: Mapping[str, Path],
+    vllm_exclusions: Sequence[str] = (),
 ) -> Path:
     """Write a temporary project that preserves relevant target source policy.
 
@@ -62,6 +63,7 @@ def render_candidate_project(
         candidate: Official PyTorch index being verified.
         environment: Concrete interpreter and Linux platform being verified.
         workspace_members: Normalized workspace package names and paths.
+        vllm_exclusions: Resolved versions rejected during bounded search.
 
     Returns:
         Path to the generated ``pyproject.toml``.
@@ -92,6 +94,7 @@ def render_candidate_project(
     for key in sorted(_COPIED_UV_KEYS):
         if key in source_uv:
             uv[key] = deepcopy(source_uv[key])
+    _add_vllm_exclusions(uv, vllm_exclusions)
     if candidate.channel is Channel.NIGHTLY:
         uv["prerelease"] = "allow"
     # Candidate resolution verifies one concrete runtime. Limiting uv's universal
@@ -124,6 +127,17 @@ def render_candidate_project(
     except OSError as exc:
         raise ConfigurationError(f"failed to write candidate project: {exc}") from exc
     return path
+
+
+def _add_vllm_exclusions(uv: Any, versions: Sequence[str]) -> None:
+    if not versions:
+        return
+    raw = uv.get("constraint-dependencies", [])
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ConfigurationError("[tool.uv].constraint-dependencies must be an array")
+    constraints = list(raw)
+    constraints.extend(f"vllm!={version}" for version in versions)
+    uv["constraint-dependencies"] = list(dict.fromkeys(constraints))
 
 
 def _requires_python(document: Mapping[str, object]) -> str:

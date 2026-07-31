@@ -25,6 +25,16 @@ class FrameworkCandidateConstraint:
     required_backend: str
 
 
+@dataclass(frozen=True, slots=True)
+class FrameworkVersionSelection:
+    """Record a verified framework version selected from a broader request."""
+
+    package: str
+    requested: str
+    resolved_version: str
+    rejected_versions: tuple[str, ...]
+
+
 def direct_vllm_candidate_constraint(
     requirements: ProjectRequirements,
     pyproject: Path,
@@ -59,6 +69,24 @@ def direct_vllm_candidate_constraint(
         version,
         backend,
     )
+
+
+def vllm_version_search_request(
+    requirements: ProjectRequirements,
+    pyproject: Path,
+) -> str | None:
+    """Return a direct vLLM range eligible for bounded candidate-only search."""
+    selected = requirements.requirement_for("vllm")
+    if len(selected) != 1 or selected[0].url is not None:
+        return None
+    specifiers = tuple(selected[0].specifier)
+    exact = any(
+        item.operator in {"==", "==="} and "*" not in item.version
+        for item in specifiers
+    )
+    if exact or _has_custom_vllm_source(pyproject):
+        return None
+    return str(selected[0])
 
 
 def _has_custom_vllm_source(pyproject: Path) -> bool:

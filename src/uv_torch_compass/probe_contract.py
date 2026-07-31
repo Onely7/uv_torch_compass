@@ -15,6 +15,7 @@ from uv_torch_compass.domain import (
     ProbeProfile,
     RuntimeReport,
 )
+from uv_torch_compass.framework_candidate_policy import FrameworkVersionSelection
 from uv_torch_compass.framework_validation import FrameworkValidation
 from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
@@ -58,6 +59,7 @@ class ProbeOutcome:
     framework_validation: tuple[FrameworkValidation, ...] = ()
     resolution: CandidateResolution | None = None
     framework_compatibility: FrameworkCompatibilityDecision | None = None
+    framework_version_selection: FrameworkVersionSelection | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -753,6 +753,61 @@ def test_exact_vllm_requirement_filters_candidates_before_locking(
     assert uv.locked_indexes == ["pytorch-cu121", "pytorch-cu121"]
 
 
+def test_vllm_range_retries_a_rejected_version_on_the_same_backend(
+    tmp_path: Path,
+) -> None:
+    class BacktrackingUv(ProbeUv):
+        def __init__(self) -> None:
+            super().__init__()
+            self.constraint_runs: list[tuple[str, ...]] = []
+
+        def lock_candidate(self, project_dir: Path, python: Path) -> CommandResult:
+            document = tomllib.loads(
+                (project_dir / "pyproject.toml").read_text(encoding="utf-8")
+            )
+            constraints = tuple(
+                document["tool"]["uv"].get("constraint-dependencies", [])
+            )
+            self.constraint_runs.append(constraints)
+            result = super().lock_candidate(project_dir, python)
+            if "vllm!=0.26.0" not in constraints:
+                lock = project_dir / "uv.lock"
+                lock.write_text(
+                    lock.read_text(encoding="utf-8").replace(
+                        'name = "vllm"\nversion = "0.19.1"',
+                        'name = "vllm"\nversion = "0.26.0"',
+                    ),
+                    encoding="utf-8",
+                )
+            return result
+
+    uv = BacktrackingUv()
+    service = _service(
+        tmp_path,
+        uv,
+        ProbeRunner([CommandResult(0, _report("cu128"), "")]),
+        ProbeReporter(),
+    )
+    service.nvidia = _nvidia()
+    service.requirements = ProjectRequirements(
+        ">=3.12",
+        "",
+        (ScopedRequirement(Scope("base"), "vllm>=0.19.1"),),
+        (),
+        (Scope("base"),),
+    )
+
+    outcome = service.find_working_candidate((BackendCandidate("cu128"),))
+
+    selection = outcome.framework_version_selection
+    assert selection is not None
+    assert selection.requested == "vllm>=0.19.1"
+    assert selection.resolved_version == "0.19.1"
+    assert selection.rejected_versions == ("0.26.0",)
+    assert [attempt.status for attempt in outcome.attempts] == ["failed", "passed"]
+    assert any("vllm!=0.26.0" in constraints for constraints in uv.constraint_runs)
+
+
 def test_install_failure_preserves_structured_resolution_context(
     tmp_path: Path,
 ) -> None:
