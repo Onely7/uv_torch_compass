@@ -28,6 +28,8 @@ dependencies = ["vllm==0.19.1"]
 
 The candidate environment first locks the complete selected dependency graph for the chosen Python minor version, Linux, and CPU architecture. If `vllm` requires particular `torch`, `torchvision`, or `torchaudio` versions, those constraints participate in backend selection. The tool redirects those transitive PyTorch packages to the same official index, relocks until the sources are consistent, and preserves the framework requirement.
 
+For a reviewed exact requirement such as `vllm==0.6.0`, uv-torch-compass narrows the CUDA candidates before locking. For a range such as `vllm>=0.19.1`, it may reject an incompatible resolved vLLM release and retry an older release on the same backend. The search is bounded. When `apply` uses a verified alternative, the original range remains in the dependency list and an exact, tool-managed uv constraint makes the verified result reproducible.
+
 Candidate resolution also preserves relevant uv constraints, overrides, private indexes, and selected path, Git, URL, or workspace sources. Only PyTorch packages are redirected to the official candidate index.
 
 If locking succeeds but a later package cannot be installed, the result keeps the resolved PyTorch versions and reports the actual blocker instead of claiming that the backend is unavailable. For example, it can distinguish “`torch==2.10.0+cu126` resolved” from “the `xgrammar` wheel required by `vllm` is unavailable for Linux x86_64.” Complete redacted uv output remains in the private log.
@@ -89,11 +91,12 @@ Before installing the complete candidate graph, uv-torch-compass extracts only t
 - `plan` installs and tests candidates in temporary environments but does not change the target `pyproject.toml`, `uv.lock`, or project environment.
 - `apply` creates timestamped backups and treats a workspace member's `pyproject.toml` and the shared root `uv.lock` as one transaction.
 - Candidate verification separates locking, locked installation, runtime checks, and framework checks. It limits the temporary lock to the selected Python minor version, Linux, and CPU architecture, allowing uv to backtrack to a version with a usable wheel when one exists.
+- Candidate graphs are read through uv's JSON workspace metadata when available. A validated lockfile reader remains as a compatibility fallback and accepts wheel entries whose optional `size` is absent.
 - Before changing the project environment, `apply` locks the complete graph and performs a locked sync dry run. It also records the current Linux architecture as a required uv environment, so unavailable wheels fail before installation starts.
 - Writes use same-directory temporary files and atomic replacement. A workspace lock prevents two `apply` processes from updating together.
 - Lock, sync, final validation, timeout, SIGINT, and SIGTERM failures trigger file rollback and an environment recovery attempt.
 - Logs and JSON reports redact common credential forms and are created with private file permissions. If `apply` succeeds but a requested report cannot be written, the project remains applied and the command exits with `1` while reporting `applied: true`.
-- uv older than 0.11.28 produces an upgrade warning. When its selective-install flags are unavailable, only artifact preflight is skipped; the existing full install and runtime validation remain the safety fallback.
+- uv older than 0.11.28 produces an upgrade warning. Metadata and selective-install capabilities are checked separately; unavailable optional capabilities use validated fallbacks while full installation and runtime validation remain required.
 
 Review `git diff` after `plan` and `apply`. Backups remain after success; [recovery and troubleshooting](https://github.com/Onely7/uv_torch_compass/blob/main/docs/recovery.md) explains their names and limitations.
 

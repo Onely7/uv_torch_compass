@@ -52,6 +52,10 @@ uv requires a direct package key before `[tool.uv.sources]` can redirect a trans
 
 Candidate resolution uses a disposable uv project. Relevant constraints, overrides, indexes, and source entries are copied from the target. Relative path and workspace sources are converted to absolute temporary references; Git and URL sources retain their original semantics. PyTorch alone is redirected to the candidate's official explicit index. Resolution uses `uv lock`; only after the lock has been parsed and its PyTorch sources verified does `uv sync --locked` install it.
 
+The resolved graph is read from `uv workspace metadata` JSON when that boundary is available. Older or incapable uv releases use a bounded fallback reader for supported lock schema version 1. Wheel `size` is optional because uv itself owns download-size and hash verification. An unknown lock schema is reported as `lock-schema-unsupported`, not as a runtime or backend failure.
+
+When a bounded vLLM range search verifies an older release, `apply` adds an exact entry to `tool.uv.constraint-dependencies` and records ownership under `tool.uv-torch-compass.state.managed-framework-constraints`. The direct range in the selected scope remains unchanged. A later managed update replaces only the constraint previously recorded as tool-owned.
+
 Unselected extras and groups are not rewritten. They still participate when uv resolves the complete lockfile, so an incompatibility elsewhere in the project can make `uv lock` fail and trigger rollback.
 
 ## Source update

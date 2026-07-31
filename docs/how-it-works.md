@@ -25,16 +25,21 @@ flowchart TD
     Driver{Is an NVIDIA GPU visible?}
     Policy[Compare each concrete CUDA build with<br/>the driver, CUDA maximum, and local catalog]
     Candidates[Keep allowed candidates newest first<br/>Record rejected candidates and reasons]
+    ExactFramework{Does an exact official vLLM version<br/>have a reviewed backend?}
+    ExactNarrow[Keep only the reviewed backend<br/>before locking]
     CPU[Use the official CPU candidate]
     Environment[Limit the temporary project to<br/>the selected Python, Linux, and architecture]
     Roots[Copy all selected dependency roots<br/>including frameworks such as vllm]
     SourcePolicy[Copy relevant target source policy<br/>Redirect only PyTorch to the candidate index]
-    Lock[Lock the complete graph<br/>and safely parse uv.lock]
+    Lock[Lock the complete graph]
+    Metadata[Read uv workspace metadata JSON<br/>or a validated lock schema 1 fallback]
     Anchors{Do all discovered PyTorch packages<br/>use the selected index?}
     Relock[Add each missing bare source anchor once<br/>then lock again]
     Artifact[Extract only the locked vLLM wheel<br/>without importing or executing it]
     ArtifactPolicy{Do the reviewed catalog and ELF libraries<br/>match this backend?}
     Narrow[Narrow candidates to the required CUDA variant<br/>or stop when none is driver-compatible]
+    RangeRetry{Is this a direct vLLM range<br/>with an untried release?}
+    ExcludeVersion[Exclude that resolved vLLM release<br/>for this temporary candidate only]
     Temporary[Install the verified lock<br/>in a temporary environment]
     Runtime[Verify resolved CUDA components<br/>Run tensor and library checks]
     Framework[Run automatic or requested bounded checks<br/>without loading user models]
@@ -66,13 +71,17 @@ flowchart TD
     CheckResult -- No --> Failed
 
     Command -- plan or apply --> Driver
-    Driver -- Yes --> Policy --> Candidates --> Environment
-    Driver -- No --> CPU --> Environment
-    Environment --> Roots --> SourcePolicy --> Lock --> Anchors
+    Driver -- Yes --> Policy --> Candidates --> ExactFramework
+    Driver -- No --> CPU --> ExactFramework
+    ExactFramework -- Yes --> ExactNarrow --> Environment
+    ExactFramework -- No --> Environment
+    Environment --> Roots --> SourcePolicy --> Lock --> Metadata --> Anchors
     Anchors -- No --> Relock --> Lock
     Anchors -- Yes --> Artifact --> ArtifactPolicy
     ArtifactPolicy -- Yes or unknown --> Temporary --> Runtime --> Framework --> CandidateResult
-    ArtifactPolicy -- No --> Narrow --> More
+    ArtifactPolicy -- No --> RangeRetry
+    RangeRetry -- Yes --> ExcludeVersion --> Lock
+    RangeRetry -- No --> Narrow --> More
     CandidateResult -- Yes --> Selected --> Action
     CandidateResult -- No --> Diagnose --> Independent
     Independent -- Yes --> Failed
@@ -90,7 +99,7 @@ flowchart TD
     FinalCheck -- No --> Restore --> Failed
 ```
 
-Candidate tests run in temporary uv projects and virtual environments, so failed candidates do not modify the target project. The temporary resolver targets the selected interpreter implementation, Python minor version, Linux, and CPU architecture. Relevant source and resolution policy is copied into that project, while only PyTorch is redirected to the candidate index. The graph is locked first, each transitive PyTorch source is verified, and that exact lock is installed only after the sources converge. Only `apply` writes the selected index. If an error occurs after backups are created, the tool restores the original files and attempts to recover the project environment. Report writing happens after a successful transaction; a report-only failure does not undo a valid applied project.
+Candidate tests run in temporary uv projects and virtual environments, so failed candidates do not modify the target project. The temporary resolver targets the selected interpreter implementation, Python minor version, Linux, and CPU architecture. Relevant source and resolution policy is copied into that project, while only PyTorch is redirected to the candidate index. The graph is locked first and read through uv's JSON workspace metadata when available; supported lock schema 1 is the bounded fallback. Each transitive PyTorch source is verified, and that exact lock is installed only after the sources converge. Only `apply` writes the selected index or a verified managed vLLM constraint. If an error occurs after backups are created, the tool restores the original files and attempts to recover the project environment. Report writing happens after a successful transaction; a report-only failure does not undo a valid applied project.
 
 Locking, artifact inspection, installation, runtime validation, and framework validation are separate phases. A successful lock records the resolved PyTorch packages before installation begins. If a later dependency such as `xgrammar` has no wheel, uv-torch-compass reports that package and its dependency path rather than discarding the PyTorch result. Known uv errors are interpreted only after credentials and control characters are removed. Common English words are never accepted as package names, and unknown formats are reported as unknown rather than guessed. Complete redacted output remains in the private log.
 
@@ -156,6 +165,8 @@ Stable failures never switch to nightly automatically. Nightly candidate install
 ## Framework checks
 
 When the lock contains vLLM, uv-torch-compass first tries to extract only that wheel with uv's selective-install flags. The wheel is never imported during this phase. A bounded standard-library parser reads ELF `DT_NEEDED` entries such as `libcudart.so.12` or `.13`. The result is combined with a small, reviewed offline catalog for official wheels. Local, Git, custom-index, and source distributions are not assigned an official-wheel variant by guesswork; they continue to runtime validation. A catalog/ELF contradiction fails closed.
+
+An exact reviewed official release, such as vLLM 0.6.0, can narrow the backend before the first lock. A direct version range may resolve to a newer release with an incompatible CUDA ABI. In that case, the release is excluded only in the disposable candidate and the same backend is locked again. At most 16 distinct releases are tried. If an alternative passes every check, `apply` preserves the original range and records the verified release as a tool-managed uv constraint.
 
 After PyTorch runtime validation, a bounded vLLM integration check runs automatically. `--framework-probe vllm` records the same check as explicitly requested and is de-duplicated with automatic detection. It confirms installed versions, normal import, native extension import, and the expected CPU or CUDA platform. Exceptions retain a redacted message and at most 12 path-bounded frames. `DTensor` and similar Python API failures are classified separately from missing CUDA libraries and undefined native symbols. A backend-independent API failure stops the remaining CUDA candidates; a CUDA ABI failure narrows the list to the required major or reviewed variant.
 

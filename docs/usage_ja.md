@@ -108,11 +108,15 @@ minor は自動 fallback ではありません。driver の通常サポートよ
 
 候補の lock に vLLM が含まれる場合、artifact と framework の検証を自動実行します。option を指定すると runtime 検証の明示的な要求として記録しますが、自動検出とは重複しません。対応する uv では依存一式より先に lock 済み vLLM wheel だけを展開し、ELF の CUDA library を候補と照合します。その後、install 済み metadata、import、native extension、選択された CPU または CUDA platform を確認します。どちらも model の取得、model cache の確保、worker の起動は行いません。
 
-検証済みの uv 最低 version は 0.11.28 です。古い version も更新警告付きで利用できます。`--only-install-package` と `--no-build-package` がなければ wheel の事前検査を省略し、完全な runtime 検証を必須のまま続けます。
+公式版を完全指定し、確認済み metadata がある場合は、最初の lock より前に backend 候補を絞れます。直接指定した version 範囲では、解決された vLLM の CUDA ABI が合わなければ、その version を除外して同じ backend を再検証できます。探索は異なる16 versionまでです。install とすべての probe を通過した version だけを、ツール管理の exact constraint として提案します。project の元の範囲指定は変更しません。
+
+検証済みの uv 最低 version は 0.11.28 です。古い version も更新警告付きで利用できます。JSON workspace metadata と wheel の選択 install は別々に確認します。metadata が使えなければ検証済み lockfile parser を使い、選択 install の option がなければ wheel の事前検査だけを省略します。完全な runtime 検証は必須です。
 
 ## 候補失敗の読み方
 
 候補処理は `lock`、`artifact`、`install`、`runtime`、`framework` に分かれます。`lock` より後で失敗しても、解決済みの PyTorch と framework の version は保持されます。そのため、別の依存 package に利用可能な wheel がない場合は、PyTorch backend 不在ではなく、その package、依存経路、対象 platform を原因として表示します。CUDA ABI、native symbol、platform、通常 import、Python API の非互換を別の失敗種別として扱います。backend に依存しない API 失敗では、同じ install の繰り返しを止めます。
+
+同種の PyTorch build 不在は text 表示でまとめますが、JSON には index ごとの全試行を残します。top-level の失敗分類により、依存関係を解決できない場合、framework 非互換、ツール側の metadata 検証エラーを区別できます。
 
 推移依存を使う最小構成は次のとおりです。
 

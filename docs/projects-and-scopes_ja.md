@@ -52,6 +52,10 @@ uv が推移依存を明示的な index へ振り分けるには、`[tool.uv.sou
 
 候補解決には破棄可能な uv project を使います。対象の constraint、override、index、関連 source を引き継ぎ、相対 path と workspace source は一時 project から参照できる絶対 path に変換します。Git と URL source の意味は維持し、公式候補 index へ切り替えるのは PyTorch だけです。最初に `uv lock` を行い、lock の PyTorch source を検証してから `uv sync --locked` でインストールします。
 
+解決済み graph は、利用できる場合は `uv workspace metadata` の JSON から読みます。古い uv などで使えない場合は、対応済み lock schema version 1 を上限付き parser で読みます。download size と hash の検証は uv の責務なので、wheel `size` は任意項目です。未知の lock schema は runtime や backend の失敗にせず、`lock-schema-unsupported` として報告します。
+
+上限付きの vLLM version 探索で古い release を検証できた場合、`apply` は `tool.uv.constraint-dependencies` に exact constraint を追加し、所有情報を `tool.uv-torch-compass.state.managed-framework-constraints` に記録します。選択 scope の直接的な範囲指定は残ります。次回の管理更新では、以前ツール管理として記録した constraint だけを置き換えます。
+
 選択していない extra と group の宣言は書き換えません。ただし uv が lockfile 全体を解決するときには影響するため、project 内の別の非互換性で `uv lock` が失敗し、rollback する場合があります。
 
 ## source の更新

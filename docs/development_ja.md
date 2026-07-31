@@ -29,6 +29,8 @@ production code には PEP 257 の `D` rule と Google pydocstyle convention を
 
 pytest は branch coverage を計測し、85% 未満を失敗にします。transaction、process、workflow、rollback、JSON、marker、source 更新の失敗分岐を変更した場合は、直接テストを追加してください。
 
+候補 metadata のテストでは、uv workspace metadata と対応済み lockfile fallback の両方を確認します。lock fixture には、uv 0.9.28／0.11.28 形式の `cu121`、`cu126`、`cu128`、`cu129` wheel を含み、任意の `size` がない表現も扱います。新しい lock 表現に対応するときは、fixture と schema の判断を明示的に追加してください。
+
 pre-commit は TOML、YAML、末尾空白、対象がある場合の ShellCheck、gitleaks による commit 済み秘密情報も確認します。
 
 ## build と smoke test
