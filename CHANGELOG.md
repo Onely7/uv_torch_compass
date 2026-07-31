@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/Onely7/uv_torch_compass/compare/v0.5.0...v0.6.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* JSON report schema is now version 7, and candidate framework diagnostics and artifact inspection contracts have changed.
+
+### Bug Fixes
+
+* strengthen vLLM compatibility diagnostics ([0198dd6](https://github.com/Onely7/uv_torch_compass/commit/0198dd6c1cb1aa84e2479b07be46787d46e22032))
+
 ## [0.5.0](https://github.com/Onely7/uv_torch_compass/compare/v0.4.0...v0.5.0) (2026-07-31)
 
 
