@@ -13,16 +13,21 @@ from collections.abc import Sequence
 def main(arguments: Sequence[str] | None = None) -> int:
     """Run bounded framework checks and emit one JSON result."""
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--framework", action="append", choices=("vllm",), required=True
-    )
+    parser.add_argument("--framework", action="append", choices=("vllm",), default=[])
+    parser.add_argument("--auto-detect", action="store_true")
     parser.add_argument("--expected-backend", required=True)
     namespace = parser.parse_args(arguments)
-    results = [
-        _probe_vllm(namespace.expected_backend)
-        for framework in dict.fromkeys(namespace.framework)
-        if framework == "vllm"
-    ]
+    explicit = tuple(dict.fromkeys(namespace.framework))
+    automatic = (
+        ("vllm",) if namespace.auto_detect and _distribution_installed("vllm") else ()
+    )
+    frameworks = tuple(dict.fromkeys((*explicit, *automatic)))
+    results = []
+    for framework in frameworks:
+        if framework == "vllm":
+            result = _probe_vllm(namespace.expected_backend)
+            result["trigger"] = "explicit" if framework in explicit else "automatic"
+            results.append(result)
     print(json.dumps({"schema_version": 1, "results": results}, sort_keys=True))
     return 0 if all(result["status"] == "PASS" for result in results) else 1
 
@@ -37,6 +42,7 @@ def _probe_vllm(expected_backend: str) -> dict[str, str]:
         "platform_test": "FAIL",
         "platform": "unknown",
         "error": "",
+        "trigger": "explicit",
     }
     try:
         result["version"] = importlib.metadata.version("vllm")
@@ -63,6 +69,14 @@ def _probe_vllm(expected_backend: str) -> dict[str, str]:
     except Exception as exc:  # The isolated process reports third-party failures.
         result["error"] = f"{type(exc).__name__}: {exc}"
     return result
+
+
+def _distribution_installed(name: str) -> bool:
+    try:
+        importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ uvx --from dist/uv_torch_compass-<version>-py3-none-any.whl \
 
 ## `plan`: 検証して変更案を見る
 
-`plan` は一時環境を作り、PyTorch の候補をインストールし、実行 probe を行ってから `pyproject.toml` の変更案を表示します。対象の `pyproject.toml`、`uv.lock`、同期済みプロジェクト環境は変更しません。
+`plan` は、選択した Python minor version と Linux architecture に対象を絞って候補を lock し、その lock を一時環境へインストールします。runtime と自動検出した framework を検証してから `pyproject.toml` の変更案を表示します。対象の `pyproject.toml`、`uv.lock`、同期済みプロジェクト環境は変更しません。
 
 ```bash
 uvx --from /path/to/uv_torch_compass uv-torch-compass plan \
@@ -76,7 +76,7 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--cuda-device INDEX_OR_UUID` | `nvidia-smi` が認識する GPU を選ぶ |
 | `--cuda-compatibility strict\|minor` | 通常の driver 対応を要求するか、同じ CUDA major 内の制限付き互換性を明示的に許可する。初期値は `strict` |
 | `--probe-profile standard\|compile` | 標準の library 検証だけを行うか、`torch.compile` も確認する。初期値は `standard` |
-| `--framework-probe vllm` | 選択した framework の連携を検証する。繰り返し指定でき、初期値では無効 |
+| `--framework-probe vllm` | 範囲を限定した vLLM 連携検証を明示する。インストール済み vLLM は自動検出して検証する |
 | `--log-dir PATH` | 重複しない非公開の実行ログを保存する |
 | `--timeout SECONDS` | install、project 検査、runtime probe、lock、sync の正の timeout を指定する。初期値は 1800 秒 |
 | `--output-format text\|json` | 人向け出力、または最後の JSON object 一つを選ぶ |
@@ -106,7 +106,19 @@ uv-torch-compass plan \
 
 minor は自動 fallback ではありません。driver の通常サポートより新しい runtime を採用した場合、成功結果にも警告が含まれます。
 
-vLLM probe は、インストール済み metadata、import、native extension、選択された CPU または CUDA platform を確認します。model の取得、model cache の確保、worker の起動は行いません。
+候補の lock に vLLM が含まれる場合、framework probe は自動実行されます。option を指定すると明示的な要求として記録しますが、検証は重複しません。インストール済み metadata、import、native extension、選択された CPU または CUDA platform を確認し、model の取得、model cache の確保、worker の起動は行いません。
+
+## 候補失敗の読み方
+
+候補処理は `lock`、`install`、`runtime`、`framework` に分かれます。`lock` より後で失敗しても、解決済みの PyTorch version は保持されます。そのため、別の依存 package に利用可能な wheel がない場合は、PyTorch backend 不在ではなく、その package、依存経路、対象 platform を原因として表示します。
+
+推移依存を使う最小構成は次のとおりです。
+
+```toml
+dependencies = ["vllm==0.19.1"]
+```
+
+uv-torch-compass は lock graph から PyTorch package を見つけ、選択した公式 index へ向けるために必要な version なしの source anchor を提案します。
 
 ## help と終了コード
 

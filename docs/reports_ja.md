@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout には最後の JSON object 一つだけを出します。進捗と警告は stderr へ送るため、stdout の redirect から解析可能な文書を得られます。
 
-schema version は `5` で、次の top-level field を含みます。
+schema version は `6` です。候補の解決結果と、その後の失敗を分けて表します。
 
 ```json
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "operation": "plan",
   "status": "failed",
   "exit_code": 1,
@@ -40,31 +40,66 @@ schema version は `5` で、次の top-level field を含みます。
   "python": {},
   "candidate_attempts": [
     {
-      "backend": "cu121",
+      "backend": "cu126",
       "stage": "install",
       "status": "failed",
-      "reason": "The required package build is unavailable from this index.",
+      "reason": "A required wheel is unavailable for the selected platform.",
       "compatibility": "strict",
+      "resolution": {
+        "status": "resolved",
+        "environment": {
+          "implementation": "cpython",
+          "python_version": "3.12.12",
+          "python_minor": "3.12",
+          "sys_platform": "linux",
+          "platform_machine": "x86_64",
+          "required_marker": "sys_platform == 'linux' and platform_machine == 'x86_64'"
+        },
+        "pytorch": {
+          "torch": {
+            "version": "2.10.0+cu126",
+            "index": "https://download.pytorch.org/whl/cu126"
+          }
+        },
+        "package_count": 182
+      },
+      "phases": {
+        "lock": "passed",
+        "install": "failed",
+        "runtime": "not-run",
+        "framework": "not-run"
+      },
       "failure": {
-        "kind": "no-compatible-distribution",
-        "summary": "The required package build is unavailable from this index.",
+        "kind": "wheel-unavailable",
+        "summary": "xgrammar has no wheel for the selected platform.",
         "package": {
-          "name": "torch",
-          "version": "2.10.0",
-          "requirement": "torch==2.10.0"
+          "name": "xgrammar",
+          "version": "0.2.4",
+          "requirement": "xgrammar==0.2.4"
         },
-        "required_by": ["vllm>=0.25.0", "torch==2.10.0"],
-        "index": {
-          "name": "pytorch-cu121",
-          "url": "https://download.pytorch.org/whl/cu121"
-        },
-        "platform": null,
-        "suggestions": ["Select a dependency version compatible with a published PyTorch build."]
+        "required_by": ["vllm==0.19.1", "xgrammar==0.2.4"],
+        "index": null,
+        "platform": "linux-x86_64",
+        "dependency_paths": [
+          ["uv-torch-compass-candidate==0", "vllm==0.19.1", "xgrammar==0.2.4"]
+        ],
+        "available_wheel_platforms": ["linux-aarch64", "macos-x86_64"],
+        "suggestions": ["Select a dependency version with a wheel for linux-x86_64."]
       }
     }
   ],
-  "resolution_failure": {},
-  "candidate_failure_summary": {},
+  "blocking_summary": {
+    "summary": "Compatible PyTorch builds were resolved, but a later candidate phase failed.",
+    "pytorch_builds_found": [
+      {
+        "backend": "cu126",
+        "index": "https://download.pytorch.org/whl/cu126",
+        "packages": {"torch": "2.10.0+cu126"}
+      }
+    ],
+    "common_blockers": [],
+    "suggestions": []
+  },
   "selected_backend": "",
   "selected_index": "",
   "selected_gpu": {},
@@ -92,9 +127,11 @@ schema version は `5` で、次の top-level field を含みます。
 
 実際の文書には、対象 package、変更案の diff、実行 log、秘密情報を含まない診断 metadata も入ります。GPU metadata には選択 device、NVIDIA driver version、`nvidia-smi` が示す CUDA 上限を記録します。
 
-各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility` と、省略可能な `failure` を持ちます。方針で除外した候補は install 前に `skipped` として記録します。`candidate_failure_summary` は全候補の失敗 package、index、重複除去した対応案を集約します。`resolution_failure` に同じ集約を入れるのは command 自体が失敗した場合だけで、途中の候補に失敗しても最終結果が成功なら failure として見せません。uv 出力から確定できない field は推測せず JSON `null` にします。
+各 `candidate_attempts` は `backend`、`stage`、`status`、`reason`、`compatibility`、`phases` と、省略可能な `resolution`、`failure` を持ちます。四つの phase は `lock`、`install`、`runtime`、`framework` です。lock に成功したあとは、後続 phase が失敗しても、実際の実行環境と解決済み PyTorch package を `resolution` に保持します。
 
-schema 5 では、実行した `probe_contract`、明示的な `framework_validation`、子 process の環境変数方針、scope 付き source anchor、最終操作状態も記録します。CUDA の `validation` には次を含みます。
+`blocking_summary` は、同じ原因 package を複数候補の間でまとめつつ、個別 attempt はすべて残します。「どの候補も解決できなかった」と「PyTorch は解決したが後続 package または検証が失敗した」を区別します。uv 出力から確定できない field は推測せず JSON `null` にします。schema 5 の `resolution_failure` と `candidate_failure_summary` は schema 6 で廃止しました。
+
+schema 6 では、実行した `probe_contract`、自動または明示指定を示す `framework_validation` trigger、子 process の環境変数方針、scope 付き source anchor、最終操作状態も記録します。CUDA の `validation` には次を含みます。
 
 - 解決した PyTorch CUDA runtime と runtime component version
 - 必要な最低 driver と、`strict`、`minor`、`unsupported` の判定

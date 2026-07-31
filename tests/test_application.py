@@ -68,7 +68,8 @@ class FakeRunner:
             return CommandResult(
                 0,
                 '{"version": "3.12.13", "implementation_name": "cpython", '
-                '"platform_implementation": "CPython"}\n',
+                '"platform_implementation": "CPython", "sys_platform": "linux", '
+                '"platform_machine": "x86_64"}\n',
                 "",
             )
         if rendered[0].endswith("/bin/python") and rendered[1].endswith(
@@ -124,7 +125,30 @@ class FakeUv:
         del request, project_dir
         return CommandResult(0, "", "")
 
-    def sync_candidate(
+    def lock_candidate(
+        self,
+        project_dir: Path,
+        python: Path,
+    ) -> CommandResult:
+        del python
+        (project_dir / "uv.lock").write_text(
+            """
+version = 1
+[[package]]
+name = "uv-torch-compass-candidate"
+version = "0"
+dependencies = [{ name = "torch" }]
+[[package]]
+name = "torch"
+version = "2.7.0"
+source = { registry = "https://download.pytorch.org/whl/cpu" }
+""".strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        return CommandResult(0, "locked", "")
+
+    def sync_locked_candidate(
         self,
         venv: Path,
         project_dir: Path,
@@ -183,6 +207,15 @@ class FakeUv:
         groups,
         cuda_device,
     ) -> CommandResult:
+        if any(
+            str(argument).endswith("framework_probe.py")
+            for argument in script_arguments
+        ):
+            return CommandResult(
+                0,
+                '{"schema_version": 1, "results": []}\n',
+                "",
+            )
         del (
             project_dir,
             python,

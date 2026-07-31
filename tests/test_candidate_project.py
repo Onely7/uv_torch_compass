@@ -8,9 +8,12 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised by Python 3.10 CI.
     import tomli as tomllib  # ty: ignore[unresolved-import]
 
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
 from uv_torch_compass.candidate_project import render_candidate_project
 from uv_torch_compass.domain import BackendCandidate, Channel
 from uv_torch_compass.errors import ConfigurationError
+
+_ENVIRONMENT = CandidateExecutionEnvironment("3.12.12", "cpython", "linux", "x86_64")
 
 
 def _write(path: Path, content: str) -> None:
@@ -33,6 +36,7 @@ def _render(
         destination=destination,
         requirements=requirements,
         candidate=candidate or BackendCandidate("cu128"),
+        environment=_ENVIRONMENT,
         workspace_members=members or {},
     )
     with rendered.open("rb") as stream:
@@ -77,7 +81,7 @@ def test_preserves_resolution_policy_and_makes_sources_portable(
         members={"workspace-package": member},
     )
 
-    assert document["project"]["requires-python"] == ">=3.12"
+    assert document["project"]["requires-python"] == ">=3.12,<3.13"
     assert document["project"]["dependencies"] == [
         "local-package",
         "workspace-package",
@@ -98,6 +102,28 @@ def test_preserves_resolution_policy_and_makes_sources_portable(
     assert [index["name"] for index in uv["index"]] == [
         "private",
         "pytorch-cu128",
+    ]
+
+
+def test_candidate_limits_python_and_declares_concrete_environment_policy(
+    tmp_path: Path,
+) -> None:
+    document = _render(
+        tmp_path,
+        """
+        [project]
+        name = "target"
+        version = "1"
+        requires-python = ">=3.12"
+        """,
+    )
+
+    assert document["project"]["requires-python"] == ">=3.12,<3.13"
+    assert document["tool"]["uv"]["environments"] == [
+        _ENVIRONMENT.resolution_environment_marker
+    ]
+    assert document["tool"]["uv"]["required-environments"] == [
+        _ENVIRONMENT.required_environment_marker
     ]
 
 
@@ -247,6 +273,7 @@ def test_rejects_unsafe_source_shapes(
             destination=tmp_path / "candidate",
             requirements=("vllm",),
             candidate=BackendCandidate("cu128"),
+            environment=_ENVIRONMENT,
             workspace_members={},
         )
 
@@ -261,5 +288,6 @@ def test_rejects_invalid_candidate_requirement(tmp_path: Path) -> None:
             destination=tmp_path / "candidate",
             requirements=("not a valid requirement !!!",),
             candidate=BackendCandidate("cpu"),
+            environment=_ENVIRONMENT,
             workspace_members={},
         )

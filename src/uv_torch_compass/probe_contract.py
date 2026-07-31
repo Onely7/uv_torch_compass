@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from uv_torch_compass.candidate_resolution import CandidateResolution
 from uv_torch_compass.cuda_compatibility import CompatibilityDecision
 from uv_torch_compass.domain import (
     CandidateAttempt,
@@ -52,6 +53,7 @@ class ProbeOutcome:
     installed_pytorch: frozenset[str] = frozenset()
     source_anchors: tuple[ManagedSourceAnchor, ...] = ()
     framework_validation: tuple[FrameworkValidation, ...] = ()
+    resolution: CandidateResolution | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,18 +62,28 @@ class CandidateProbeResult:
 
     outcome: ProbeOutcome | None
     failure: ResolutionFailure | None
+    resolution: CandidateResolution | None = None
+    stage: str = "runtime"
 
     def __post_init__(self) -> None:
         """Require exactly one success outcome or failure reason."""
         if (self.outcome is None) == (self.failure is None):
             raise ValueError("candidate result requires either an outcome or a failure")
+        if self.stage not in {"lock", "install", "runtime", "framework"}:
+            raise ValueError(f"unsupported candidate result stage {self.stage!r}")
 
     @classmethod
     def passed(cls, outcome: ProbeOutcome) -> CandidateProbeResult:
         """Create a successful candidate result."""
-        return cls(outcome, None)
+        return cls(outcome, None, outcome.resolution, "runtime")
 
     @classmethod
-    def failed(cls, failure: ResolutionFailure) -> CandidateProbeResult:
+    def failed(
+        cls,
+        failure: ResolutionFailure,
+        resolution: CandidateResolution | None = None,
+        *,
+        stage: str = "runtime",
+    ) -> CandidateProbeResult:
         """Create a failed candidate result."""
-        return cls(None, failure)
+        return cls(None, failure, resolution, stage)

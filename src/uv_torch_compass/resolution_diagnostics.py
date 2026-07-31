@@ -61,6 +61,7 @@ _REGISTRY_MISSING = re.compile(
     r"\s+was not found in the package registry",
     re.IGNORECASE,
 )
+_WHEEL_PLATFORM = re.compile(r"`([^`\n]+)`")
 
 
 def interpret_uv_failure(
@@ -135,7 +136,7 @@ def interpret_uv_failure(
             "only has wheels for",
         ),
     ):
-        return _failure(
+        failure = _failure(
             ResolutionFailureKind.WHEEL_UNAVAILABLE,
             "The selected package version has no installable wheel for this platform.",
             package,
@@ -143,6 +144,16 @@ def interpret_uv_failure(
             index,
             platform,
             ("Select a package version that publishes a wheel for this platform.",),
+        )
+        return ResolutionFailure(
+            failure.kind,
+            failure.summary,
+            failure.package,
+            failure.required_by,
+            failure.index,
+            failure.platform,
+            failure.suggestions,
+            available_wheel_platforms=_wheel_platforms(clean),
         )
     if (
         _NO_VERSION.search(clean)
@@ -352,6 +363,16 @@ def _match_group(pattern: re.Pattern[str], value: str, group: str) -> str | None
 
 def _contains_any(value: str, needles: Sequence[str]) -> bool:
     return any(needle in value for needle in needles)
+
+
+def _wheel_platforms(output: str) -> tuple[str, ...]:
+    marker = "only has wheels for the following platforms:"
+    lowered = output.lower()
+    position = lowered.find(marker)
+    if position < 0:
+        return ()
+    section = output[position + len(marker) : position + len(marker) + 2_000]
+    return tuple(dict.fromkeys(_WHEEL_PLATFORM.findall(section)))[:20]
 
 
 def _failure(

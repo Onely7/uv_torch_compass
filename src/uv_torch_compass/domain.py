@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from packaging.markers import default_environment
 from packaging.requirements import InvalidRequirement, Requirement
@@ -20,6 +20,9 @@ from uv_torch_compass.cuda_compatibility import (
     CompatibilityPolicy,
 )
 from uv_torch_compass.errors import ConfigurationError, ProbeError
+
+if TYPE_CHECKING:
+    from uv_torch_compass.candidate_resolution import CandidateResolution
 
 _CUDA_BACKEND_PATTERN = re.compile(r"cu[0-9]{2,3}", re.ASCII)
 _GPU_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9_.:-]+", re.ASCII)
@@ -56,7 +59,7 @@ class ProbeProfile(str, Enum):
 
 
 class FrameworkProbe(str, Enum):
-    """Identify an opt-in framework integration check."""
+    """Identify a supported framework integration check."""
 
     VLLM = "vllm"
 
@@ -571,6 +574,7 @@ class CandidateAttempt:
     reason: str
     compatibility: str
     failure: ResolutionFailure | None = None
+    resolution: CandidateResolution | None = None
 
 
 class ResolutionFailureKind(str, Enum):
@@ -615,6 +619,8 @@ class ResolutionFailure:
     index: FailedIndex | None = None
     platform: str | None = None
     suggestions: tuple[str, ...] = ()
+    dependency_paths: tuple[tuple[str, ...], ...] = ()
+    available_wheel_platforms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

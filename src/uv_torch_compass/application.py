@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from uv_torch_compass.backend_selection import build_candidate_plan
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
 from uv_torch_compass.candidate_probe import CandidateProbeService
 from uv_torch_compass.command_runner import CommandResult, ProcessRunner
 from uv_torch_compass.cuda_compatibility import (
@@ -174,6 +175,12 @@ class CompassApplication:
                 compatibility_policy=self.options.cuda_compatibility,
                 probe_profile=self.options.probe_profile,
                 target_pyproject=self.options.pyproject,
+                execution_environment=CandidateExecutionEnvironment(
+                    python.version,
+                    python.implementation_name,
+                    python.sys_platform,
+                    python.platform_machine,
+                ),
                 workspace_members=workspace.members,
                 framework_probes=self.options.framework_probes,
             )
@@ -212,7 +219,11 @@ class CompassApplication:
         metadata["probe_contract"] = {
             "profile": self.options.probe_profile.value,
             "frameworks": [
-                framework.value for framework in self.options.framework_probes
+                {
+                    "name": validation.framework.value,
+                    "trigger": validation.trigger,
+                }
+                for validation in verified.framework_validation
             ],
             "installed_pytorch": sorted(verified.installed_pytorch),
         }
@@ -419,7 +430,11 @@ class CompassApplication:
         metadata["probe_contract"] = {
             "profile": self.options.probe_profile.value,
             "frameworks": [
-                framework.value for framework in self.options.framework_probes
+                {
+                    "name": validation.framework.value,
+                    "trigger": validation.trigger,
+                }
+                for validation in framework_validations
             ],
         }
         metadata["environment_policy"] = {
@@ -542,12 +557,11 @@ class CompassApplication:
         backend,
         gpu_selector: str | None,
     ) -> tuple[FrameworkValidation, ...]:
-        if not self.options.framework_probes:
-            return ()
         arguments: list[str | Path] = [
             Path(__file__).with_name("framework_probe.py").resolve(),
             "--expected-backend",
             backend.value,
+            "--auto-detect",
         ]
         for framework in self.options.framework_probes:
             arguments.extend(["--framework", framework.value])
@@ -565,6 +579,7 @@ class CompassApplication:
             validations = parse_framework_probe(
                 result.stdout,
                 self.options.framework_probes,
+                allow_automatic=True,
             )
         except ProbeError as exc:
             raise CommandError(str(exc)) from exc

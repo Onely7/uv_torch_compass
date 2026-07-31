@@ -26,12 +26,15 @@ flowchart TD
     Policy[具体的な CUDA build ごとに<br/>driver、CUDA 上限、組み込み表を照合する]
     Candidates[許可した候補を新しい順に並べる<br/>除外した理由も記録する]
     CPU[公式 CPU 候補を使う]
-    Roots[vllm なども含む<br/>選択済みの依存ルート全体を解決する]
+    Environment[一時 project を選択した Python、<br/>Linux、architecture に限定する]
+    Roots[vllm なども含む<br/>選択済みの依存ルートを引き継ぐ]
     SourcePolicy[対象の関連 source 方針を引き継ぎ<br/>PyTorch だけを候補 index へ向ける]
-    Temporary[依存グラフ全体を<br/>一時環境へ install する]
-    Metadata[install 済み metadata を読み<br/>推移的な PyTorch package を見つける]
+    Lock[依存グラフ全体を lock し<br/>uv.lock を安全に解析する]
+    Anchors{見つかった PyTorch package は<br/>すべて選択 index を使うか}
+    Relock[不足する version なし anchor を<br/>一度だけ追加して再 lock する]
+    Temporary[検証済み lock を<br/>一時環境へ install する]
     Runtime[解決した CUDA component を確認し<br/>tensor と library の検証を行う]
-    Framework[指定された範囲限定の framework 検証を行う<br/>利用者の model は読み込まない]
+    Framework[自動検出または明示した framework を検証する<br/>利用者の model は読み込まない]
     CandidateResult{候補は検証を通過したか}
     Diagnose[認証情報を除いた uv の失敗を分類し<br/>package、requirement、index を記録する]
     More{次の候補があるか}
@@ -59,12 +62,14 @@ flowchart TD
     CheckResult -- いいえ --> Failed
 
     Command -- plan または apply --> Driver
-    Driver -- はい --> Policy --> Candidates --> Roots
-    Driver -- いいえ --> CPU --> Roots
-    Roots --> SourcePolicy --> Temporary --> Metadata --> Runtime --> Framework --> CandidateResult
+    Driver -- はい --> Policy --> Candidates --> Environment
+    Driver -- いいえ --> CPU --> Environment
+    Environment --> Roots --> SourcePolicy --> Lock --> Anchors
+    Anchors -- いいえ --> Relock --> Lock
+    Anchors -- はい --> Temporary --> Runtime --> Framework --> CandidateResult
     CandidateResult -- はい --> Selected --> Action
     CandidateResult -- いいえ --> Diagnose --> More
-    More -- はい --> Roots
+    More -- はい --> Environment
     More -- いいえ --> Failed
 
     Action -- plan --> Plan --> Planned
@@ -77,9 +82,9 @@ flowchart TD
     FinalCheck -- いいえ --> Restore --> Failed
 ```
 
-候補の検証には一時的な uv project と virtual environment を使うため、候補が失敗しても対象 project は変更されません。関連する source と解決方針を一時 project へ引き継ぎ、PyTorch だけを候補 index へ向けます。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。report の保存は transaction 成功後に行うため、report だけの失敗では正常な適用結果を戻しません。
+候補の検証には一時的な uv project と virtual environment を使うため、候補が失敗しても対象 project は変更されません。一時 resolver は、選択した interpreter implementation、Python minor version、Linux、CPU architecture だけを対象にします。関連する source と解決方針を引き継ぎ、PyTorch だけを候補 index へ向けます。最初に lock し、推移的な PyTorch source が同じ index に収束したことを確認してから、その lock を install します。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。
 
-install が失敗した場合は、認証情報と制御文字を除去してから、既知の uv resolver形式を解析します。原因の package、version requirement、依存経路、index、platformは、uv出力または候補方針から確定できる場合だけ記録します。未知の形式を推測で補わず、`unknown`として報告し、完全なredaction済み出力をprivate logへ残します。
+lock、install、runtime 検証、framework 検証は別の phase です。lock に成功した時点で、解決済みの PyTorch package を保存します。その後 `xgrammar` などに利用可能な wheel がなくても、PyTorch の結果を捨てず、その package と依存経路を原因として表示します。既知の uv エラーは認証情報と制御文字を除去してから解析し、未知の形式を推測で補わず `unknown` として private log へ案内します。
 
 ## Python の選択
 
@@ -140,15 +145,15 @@ stable の失敗から nightly へ自動で移りません。nightly の install
 
 `--cuda-device` には `nvidia-smi` の index または完全な GPU UUID を指定できます。省略時は `CUDA_VISIBLE_DEVICES` があればその先頭、なければ見えている GPU のうち空き memory が最大のものを選びます。これは使用中の先頭 GPU を避けるための選択であり、memory の予約ではありません。選択した GPU の UUID を runtime へ渡すため、複数 GPU の環境でも論理的な `cuda:0` になります。
 
-## 任意の framework 検証
+## framework 検証
 
-`--framework-probe vllm` は、PyTorch runtime probe のあとに範囲を限定した連携確認を追加します。インストール済み vLLM version、通常 import、native extension import、vLLM が選んだ CPU または CUDA platform を確認します。model の取得、engine の開始、worker の起動、model 規模の GPU memory 確保は行いません。同じ確認を `apply` 後と `check` でも再実行します。
+解決済み package metadata に vLLM が含まれる場合、PyTorch runtime probe のあとに範囲を限定した連携確認を自動実行します。`--framework-probe vllm` は同じ検証を明示的な要求として記録し、自動検出との重複は除きます。インストール済み vLLM version、通常 import、native extension import、vLLM が選んだ CPU または CUDA platform を確認します。model の取得、engine の開始、worker の起動、model 規模の GPU memory 確保は行いません。
 
 CUDA を必須にした場合、NVIDIA 情報の欠落はエラーです。`auto` では `nvidia-smi` がなければ CPU 専用 host として扱います。`nvidia-smi` が存在するのに失敗した場合や出力が不正な場合は、不明な NVIDIA 状態を CPU 専用とみなさず失敗します。
 
 ## runtime probe
 
-候補ごとに新しい一時 virtual environment を作り、選択した基本依存、extra、group の依存ルートをすべてインストールします。これにより、`vllm` などが要求する version 制約も PyTorch の解決に反映されます。第三者 package を import せず、install 済みの `dist-info` metadata から PyTorch package を見つけて実行検証します。probe は JSON を返し、親 process が内容をもう一度検証します。
+候補ごとに、選択した Linux 実行環境だけを対象として最初に lock し、その lock から新しい一時 virtual environment へインストールします。利用可能な wheel がある version へ uv が戻って選び直せる一方、`vllm` などの version 制約も PyTorch の解決に反映されます。無関係な第三者 package を import せず、install 済みの `dist-info` metadata から PyTorch package を見つけて実行検証します。probe は JSON を返し、親 process が内容をもう一度検証します。
 
 | 確認 | 必要な動作 |
 | --- | --- |

@@ -29,7 +29,7 @@ uvx --from dist/uv_torch_compass-<version>-py3-none-any.whl \
 
 ## `plan`: verify and preview
 
-`plan` creates temporary environments, installs candidate PyTorch packages, runs the runtime probe, and prints the proposed `pyproject.toml` diff. It does not change the target `pyproject.toml`, `uv.lock`, or synchronized project environment.
+`plan` locks each candidate for the selected Python minor version and Linux architecture, installs that exact lock in a temporary environment, runs runtime and detected-framework checks, and prints the proposed `pyproject.toml` diff. It does not change the target `pyproject.toml`, `uv.lock`, or synchronized project environment.
 
 ```bash
 uvx --from /path/to/uv_torch_compass uv-torch-compass plan \
@@ -76,7 +76,7 @@ uvx --from /path/to/uv_torch_compass uv-torch-compass check \
 | `--cuda-device INDEX_OR_UUID` | Select a GPU known to `nvidia-smi`. |
 | `--cuda-compatibility strict\|minor` | Require normal driver support, or explicitly allow limited same-major CUDA compatibility; default: `strict`. |
 | `--probe-profile standard\|compile` | Run standard library checks, or also test `torch.compile`; default: `standard`. |
-| `--framework-probe vllm` | Validate the selected framework integration; repeatable and disabled by default. |
+| `--framework-probe vllm` | Explicitly request the bounded vLLM integration check; installed vLLM is also detected and checked automatically. |
 | `--log-dir PATH` | Store the unique private run log in this directory. |
 | `--timeout SECONDS` | Set the positive timeout for installation, project checks, runtime probes, lock, and sync; default: 1800. |
 | `--output-format text\|json` | Choose human-readable output or one final JSON object. |
@@ -106,7 +106,19 @@ uv-torch-compass plan \
 
 Minor mode is not an automatic fallback. If it selects a runtime newer than the driver's normal support level, the successful result includes a warning.
 
-The vLLM framework probe checks installed metadata, importability, the native extension, and the selected CPU or CUDA platform. It does not download a model, allocate a model cache, or start workers.
+When the candidate lock contains vLLM, the framework probe runs automatically. The option records an explicit request but does not duplicate the check. It checks installed metadata, importability, the native extension, and the selected CPU or CUDA platform. It does not download a model, allocate a model cache, or start workers.
+
+## Understanding candidate failures
+
+Candidate work is split into `lock`, `install`, `runtime`, and `framework` phases. A failure after `lock` retains the resolved PyTorch versions. This means an unavailable wheel for another dependency is reported as that package's blocker, with its dependency path and platform, instead of being described as a missing PyTorch backend.
+
+For a transitive setup, this is enough:
+
+```toml
+dependencies = ["vllm==0.19.1"]
+```
+
+uv-torch-compass discovers the PyTorch packages in the lock graph and proposes the bare source anchors needed to keep them on the selected official index.
 
 ## Help and exit codes
 

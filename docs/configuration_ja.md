@@ -44,7 +44,7 @@ output-format = "text"
 | `UV_TORCH_COMPASS_CHANNEL` | `stable` または `nightly` |
 | `UV_TORCH_COMPASS_CUDA_COMPATIBILITY` | `strict`、または明示的に許可する `minor` |
 | `UV_TORCH_COMPASS_PROBE_PROFILE` | `standard` または `compile` |
-| `UV_TORCH_COMPASS_FRAMEWORK_PROBES` | comma 区切りの明示的な framework 検証。現在は `vllm` |
+| `UV_TORCH_COMPASS_FRAMEWORK_PROBES` | comma 区切りの明示的な framework 検証。現在は `vllm`。インストール済み vLLM は自動検証する |
 | `UV_TORCH_COMPASS_EXTRAS` | comma 区切りの extra |
 | `UV_TORCH_COMPASS_GROUPS` | comma 区切りの依存グループ |
 | `UV_TORCH_COMPASS_CUDA_DEVICE` | NVIDIA index または UUID |
@@ -72,7 +72,7 @@ export UV_TORCH_COMPASS_EXTRAS='vision,audio,vision,'
 | channel | `stable` |
 | CUDA compatibility | `strict` |
 | probe profile | `standard` |
-| framework probe | なし |
+| 明示的な framework probe | なし。インストール済み vLLM は自動検出する |
 | extra と group | なし |
 | CUDA device | 現在の CUDA 選択や `--cuda-device` で固定しない場合、見えている device のうち空き memory が最大のもの |
 | link mode | `copy` |

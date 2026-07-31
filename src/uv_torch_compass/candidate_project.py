@@ -13,6 +13,7 @@ from packaging.utils import canonicalize_name
 from tomlkit.exceptions import ParseError
 from tomlkit.items import AoT
 
+from uv_torch_compass.candidate_environment import CandidateExecutionEnvironment
 from uv_torch_compass.domain import PYTORCH_PACKAGES, BackendCandidate, Channel
 from uv_torch_compass.errors import ConfigurationError
 from uv_torch_compass.index_url import canonical_official_pytorch_url
@@ -44,6 +45,7 @@ def render_candidate_project(
     destination: Path,
     requirements: Sequence[str],
     candidate: BackendCandidate,
+    environment: CandidateExecutionEnvironment,
     workspace_members: Mapping[str, Path],
 ) -> Path:
     """Write a temporary project that preserves relevant target source policy.
@@ -58,6 +60,7 @@ def render_candidate_project(
         destination: Empty temporary directory for candidate state.
         requirements: Selected dependency roots for the candidate.
         candidate: Official PyTorch index being verified.
+        environment: Concrete interpreter and Linux platform being verified.
         workspace_members: Normalized workspace package names and paths.
 
     Returns:
@@ -78,7 +81,8 @@ def render_candidate_project(
     project = tomlkit.table()
     project["name"] = "uv-torch-compass-candidate"
     project["version"] = "0"
-    project["requires-python"] = _requires_python(source_document)
+    _requires_python(source_document)
+    project["requires-python"] = environment.requires_python
     project["dependencies"] = _candidate_requirements(requirements)
     document["project"] = project
 
@@ -90,6 +94,11 @@ def render_candidate_project(
             uv[key] = deepcopy(source_uv[key])
     if candidate.channel is Channel.NIGHTLY:
         uv["prerelease"] = "allow"
+    # Candidate resolution verifies one concrete runtime. Limiting uv's universal
+    # resolution here allows it to reject wheels missing for that runtime without
+    # changing the target project's broader Python support declaration.
+    uv["environments"] = [environment.resolution_environment_marker]
+    uv["required-environments"] = [environment.required_environment_marker]
 
     indexes = _copy_indexes(source_uv)
     _add_candidate_index(indexes, candidate)

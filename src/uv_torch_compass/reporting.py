@@ -222,6 +222,9 @@ class CommandReporter:
             print("Failed candidates:", file=sys.stdout)
             for attempt in failed:
                 _print_failed_attempt(attempt)
+            blocking = document.get("blocking_summary")
+            if isinstance(blocking, dict) and blocking.get("summary"):
+                print(f"Blocking summary: {blocking['summary']}", file=sys.stdout)
         print(f"Applied: {'yes' if document['applied'] else 'no'}", file=sys.stdout)
         if document["changes"]:
             print("Changes:", file=sys.stdout)
@@ -281,7 +284,7 @@ def _result_document(
                 "reason": outcome.compatibility.reason,
             }
     return {
-        "schema_version": 5,
+        "schema_version": 6,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -310,14 +313,12 @@ def _result_document(
                 "reason": redact(attempt.reason),
                 "compatibility": attempt.compatibility,
                 "failure": _failure_document(attempt.failure),
+                "resolution": _resolution_document(attempt.resolution),
+                "phases": _phase_document(attempt.stage, attempt.status),
             }
             for attempt in outcome.attempts
         ],
-        "resolution_failure": (
-            _aggregate_resolution_failure(outcome)
-            if outcome.status == "failed"
-            else None
-        ),
+        "blocking_summary": _blocking_summary(outcome),
         "selected_backend": selected_backend,
         "selected_index": selected_index,
         "selected_gpu": selected_gpu,
@@ -341,7 +342,6 @@ def _result_document(
             {"applied": outcome.applied, "report_written": False},
         ),
         "environment_policy": outcome.metadata.get("environment_policy", {}),
-        "candidate_failure_summary": _aggregate_resolution_failure(outcome),
         "validation": runtime_document,
         "changes": list(outcome.changes),
         "backups": [str(path) for path in outcome.backups],
@@ -379,37 +379,109 @@ def _failure_document(failure: Any) -> dict[str, Any] | None:
         "index": index,
         "platform": failure.platform,
         "suggestions": list(failure.suggestions),
+        "dependency_paths": [list(path) for path in failure.dependency_paths],
+        "available_wheel_platforms": list(failure.available_wheel_platforms),
     }
 
 
-def _aggregate_resolution_failure(outcome: CommandOutcome) -> dict[str, Any] | None:
-    failures = [
-        attempt.failure for attempt in outcome.attempts if attempt.failure is not None
-    ]
-    if not failures:
+def _resolution_document(resolution: Any) -> dict[str, Any] | None:
+    if resolution is None:
         return None
-    packages = list(
-        dict.fromkeys(
-            failure.package.name for failure in failures if failure.package is not None
+    return {
+        "status": "resolved",
+        "environment": {
+            "implementation": resolution.environment.implementation_name,
+            "python_version": resolution.environment.python_version,
+            "python_minor": resolution.environment.python_minor,
+            "sys_platform": resolution.environment.sys_platform,
+            "platform_machine": resolution.environment.platform_machine,
+            "required_marker": resolution.environment.required_environment_marker,
+        },
+        "pytorch": {
+            package.name: {
+                "version": package.version,
+                "index": package.source_url,
+            }
+            for package in resolution.pytorch_packages
+        },
+        "package_count": len(resolution.lock.packages),
+    }
+
+
+def _phase_document(terminal_stage: str, status: str) -> dict[str, str]:
+    stages = ("lock", "install", "runtime", "framework")
+    if status == "skipped":
+        return dict.fromkeys(stages, "not-run")
+    terminal_position = stages.index(terminal_stage)
+    return {
+        stage: (
+            "passed"
+            if position < terminal_position
+            else status
+            if position == terminal_position
+            else "not-run"
         )
-    )
-    indexes = list(
-        dict.fromkeys(
-            failure.index.name or failure.index.url
-            for failure in failures
-            if failure.index is not None
+        for position, stage in enumerate(stages)
+    }
+
+
+def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
+    failed = [attempt for attempt in outcome.attempts if attempt.failure is not None]
+    if not failed:
+        return None
+    resolved_builds: list[dict[str, Any]] = []
+    blockers: dict[tuple[object, ...], dict[str, Any]] = {}
+    suggestions: list[str] = []
+    for attempt in failed:
+        resolution = attempt.resolution
+        if resolution is not None:
+            build = {
+                "backend": attempt.backend,
+                "index": resolution.backend.index_url,
+                "packages": {
+                    package.name: package.version
+                    for package in resolution.pytorch_packages
+                },
+            }
+            if build not in resolved_builds:
+                resolved_builds.append(build)
+        failure = attempt.failure
+        if failure is None:
+            continue
+        package_name = failure.package.name if failure.package is not None else None
+        package_version = (
+            failure.package.version if failure.package is not None else None
         )
-    )
-    suggestions = list(
-        dict.fromkeys(
-            suggestion for failure in failures for suggestion in failure.suggestions
+        fingerprint = (
+            failure.kind.value,
+            package_name,
+            package_version,
+            failure.platform,
+            failure.dependency_paths,
         )
+        blocker = blockers.setdefault(
+            fingerprint,
+            {
+                "kind": failure.kind.value,
+                "package": package_name,
+                "version": package_version,
+                "platform": failure.platform,
+                "dependency_paths": [list(path) for path in failure.dependency_paths],
+                "candidates": [],
+            },
+        )
+        blocker["candidates"].append(attempt.backend)
+        suggestions.extend(failure.suggestions)
+    summary = (
+        "Compatible PyTorch builds were resolved, but a later candidate phase failed."
+        if resolved_builds
+        else "No candidate resolved the selected dependency graph."
     )
     return {
-        "summary": "No candidate satisfied the selected dependency graph.",
-        "packages": packages,
-        "indexes": indexes,
-        "suggestions": suggestions,
+        "summary": summary,
+        "pytorch_builds_found": resolved_builds,
+        "common_blockers": list(blockers.values()),
+        "suggestions": list(dict.fromkeys(suggestions)),
     }
 
 
@@ -422,6 +494,13 @@ def _print_failed_attempt(attempt: dict[str, Any]) -> None:
         f"  - {attempt['backend']}: {failure['summary']}",
         file=sys.stdout,
     )
+    resolution = attempt.get("resolution")
+    if isinstance(resolution, dict) and resolution.get("pytorch"):
+        packages = ", ".join(
+            f"{name}=={details['version']}"
+            for name, details in resolution["pytorch"].items()
+        )
+        print(f"    Resolved PyTorch: {packages}", file=sys.stdout)
     package = failure.get("package")
     if isinstance(package, dict):
         requirement = package.get("requirement") or package.get("name")
@@ -429,12 +508,23 @@ def _print_failed_attempt(attempt: dict[str, Any]) -> None:
     required_by = failure.get("required_by")
     if required_by:
         print(f"    Required by: {' -> '.join(required_by)}", file=sys.stdout)
+    dependency_paths = failure.get("dependency_paths", [])
+    if dependency_paths:
+        print(
+            f"    Dependency path: {' -> '.join(dependency_paths[0])}",
+            file=sys.stdout,
+        )
     index = failure.get("index")
     if isinstance(index, dict):
         label = index.get("name") or "package index"
         print(f"    Index: {label} ({index.get('url', '')})", file=sys.stdout)
     if failure.get("platform"):
         print(f"    Platform: {failure['platform']}", file=sys.stdout)
+    if failure.get("available_wheel_platforms"):
+        print(
+            "    Available wheels: " + ", ".join(failure["available_wheel_platforms"]),
+            file=sys.stdout,
+        )
     for suggestion in failure.get("suggestions", []):
         print(f"    Suggestion: {suggestion}", file=sys.stdout)
 

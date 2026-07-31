@@ -81,13 +81,30 @@ class UvCommandClient:
         """Install an interpreter satisfying a uv Python request."""
         return self._heavy(["python", "install", request], cwd=project_dir)
 
-    def sync_candidate(
+    def lock_candidate(
+        self,
+        project_dir: Path,
+        python: Path,
+    ) -> CommandResult:
+        """Resolve one candidate project without installing its distributions."""
+        return self._heavy(
+            [
+                "lock",
+                "--project",
+                str(project_dir),
+                "--python",
+                str(python),
+            ],
+            cwd=project_dir,
+        )
+
+    def sync_locked_candidate(
         self,
         venv: Path,
         project_dir: Path,
         python: Path,
     ) -> CommandResult:
-        """Resolve and install one isolated candidate project."""
+        """Install an already resolved candidate without changing its lockfile."""
         arguments: list[str | Path] = [
             "sync",
             "--project",
@@ -96,6 +113,7 @@ class UvCommandClient:
             str(python),
             "--no-install-project",
             "--no-dev",
+            "--locked",
         ]
         return self._heavy(
             arguments,

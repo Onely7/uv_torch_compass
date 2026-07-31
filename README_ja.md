@@ -26,11 +26,11 @@ PyTorch に依存する framework を使う場合は、実際に使う依存だ�
 dependencies = ["vllm==0.19.1"]
 ```
 
-候補環境では、選択した依存グラフ全体を解決します。`vllm` が特定の `torch`、`torchvision`、`torchaudio` version を要求する場合、その制約を backend 選択にも反映します。適用時には、uv の明示的な PyTorch index に必要な直接依存だけを source anchor として補い、ツールが追加したものとして記録します。元の framework 依存は維持されます。
+候補環境では、選択した Python の minor version、Linux、CPU architecture に対象を絞り、最初に依存グラフ全体を lock します。`vllm` が特定の `torch`、`torchvision`、`torchaudio` version を要求する場合、その制約を backend 選択にも反映します。推移的に導入された PyTorch package を同じ公式 index へ向け、取得先がそろうまで再度 lock します。元の framework 依存は維持されます。
 
 候補解決では、関連する uv の constraint、override、private index、選択した path・Git・URL・workspace source も引き継ぎます。検証中の公式 index へ切り替えるのは PyTorch package だけです。
 
-許可された CUDA index に必要な PyTorch build がなければ、project を変更する前に失敗します。結果には、原因の package と requirement、それを導入した package、試した index、次に取れる対応を表示します。uv の完全な出力は、認証情報を除去してprivate logだけに残します。
+lock に成功したあと別の package をインストールできなかった場合も、解決済みの PyTorch version を保持し、backend がないと誤って報告しません。たとえば、「`torch==2.10.0+cu126` は解決済み」と「`vllm` が必要とする `xgrammar` の Linux x86_64 用 wheel がない」を区別できます。uv の完全な出力は、認証情報を除去してprivate logだけに残します。
 
 対象プロジェクトで、PyPI に公開された版を使い、まず候補を検証して変更案を確認します。
 
@@ -80,12 +80,13 @@ uv-torch-compass plan --framework-probe vllm
 
 channel の初期値は安定版を示す `stable` です。開発版の `nightly` は、明示した場合だけ使います。CUDA minor-version compatibility も `--cuda-compatibility minor` で明示した場合だけ使い、同じ major 系列の新しい CUDA runtime を利用できますが、成功時にも警告が残ります。順番と検証内容は[バックエンドと実行環境の選択](https://github.com/Onely7/uv_torch_compass/blob/main/docs/how-it-works_ja.md)を参照してください。
 
-`--framework-probe vllm` も明示した場合だけ実行します。model を取得したり worker を起動したりせず、vLLM の metadata、import、native extension、選択された実行 platform を確認します。
+解決結果に `vllm` が含まれる場合、範囲を限定した vLLM 検証を自動実行します。`--framework-probe vllm` は明示的に要求したい場合にも使えます。model を取得したり worker を起動したりせず、metadata、import、native extension、選択された実行 platform を確認します。
 
 ## 安全性の概要
 
 - `plan` は一時環境へ候補をインストールして検証しますが、対象の `pyproject.toml`、`uv.lock`、プロジェクト環境を変更しません。
 - `apply` は日時付きバックアップを作り、workspace member の `pyproject.toml` と root の共有 `uv.lock` を一つの更新単位として扱います。
+- 候補検証を lock、lock 済み install、runtime 検証、framework 検証に分けます。一時 lock の対象を選択した Python minor、Linux、CPU architecture に絞るため、利用できる wheel を持つ version があれば uv がそこまで戻って選び直せます。
 - project 環境を変更する前に、依存グラフ全体を lock し、locked sync の dry run を行います。現在の Linux architecture も uv の必須環境として記録するため、利用できない wheel はインストール開始前に検出されます。
 - 同じディレクトリの一時ファイルを使い、書きかけを見せずに一括置換します。workspace lock により、二つの `apply` が同時に更新することも防ぎます。
 - lock、sync、最終検証、timeout、SIGINT、SIGTERM の失敗時は、ファイルを復元し、環境の復旧も試みます。

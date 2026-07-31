@@ -45,6 +45,10 @@ def test_reports_unavailable_wheel_and_platform() -> None:
     assert failure.package.name == "xgrammar"
     assert failure.package.version == "0.2.4"
     assert failure.platform == "manylinux_2_39_x86_64"
+    assert failure.available_wheel_platforms == (
+        "manylinux_2_28_aarch64",
+        "macosx_11_0_arm64",
+    )
 
 
 def test_reports_dependency_conflict() -> None:

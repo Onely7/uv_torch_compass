@@ -21,6 +21,7 @@ def _output(**overrides: str) -> str:
         "platform_test": "PASS",
         "platform": "CudaPlatform",
         "error": "",
+        "trigger": "explicit",
     }
     result.update(overrides)
     return json.dumps({"schema_version": 1, "results": [result]})
@@ -39,6 +40,7 @@ def test_parses_requested_framework_validation() -> None:
             "PASS",
             "CudaPlatform",
             "",
+            "explicit",
         ),
     )
     assert framework_validation_document(validations)[0]["framework"] == "vllm"
@@ -59,6 +61,10 @@ def test_parses_requested_framework_validation() -> None:
         (
             _output(framework="unknown"),
             "unknown framework",
+        ),
+        (
+            _output(trigger="unknown"),
+            "invalid trigger",
         ),
         (
             '{"schema_version": 1, "results": []}',
@@ -88,3 +94,13 @@ def test_duplicate_result_does_not_satisfy_distinct_contract() -> None:
     )
 
     assert len(validations) == 1
+
+
+def test_accepts_automatic_framework_results_when_enabled() -> None:
+    validations = parse_framework_probe(
+        _output(trigger="automatic"),
+        (),
+        allow_automatic=True,
+    )
+
+    assert validations[0].trigger == "automatic"
