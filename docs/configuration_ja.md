@@ -82,6 +82,8 @@ export UV_TORCH_COMPASS_EXTRAS='vision,audio,vision,'
 
 設定可能な timeout は、候補の install、project 検査、runtime probe、lock、sync に使います。uv の version や利用可能な backend 名を読む短い metadata command には、別の 30 秒制限を残します。
 
+検証済みの uv 最低 version は 0.11.28 です。それより古いという理由だけでは拒否しません。警告を出して optional flag を直接確認し、選択 install に対応しない場合は vLLM wheel の事前検査だけを省略します。完全 install と runtime 検証は引き続き実行します。
+
 `strict` は、選択した driver が通常サポートする範囲より新しい CUDA runtime を拒否します。`minor` は同じ CUDA major 内の制限付き互換性を明示的に許可し、採用時は警告を残します。`standard` は tensor、NumPy、cuBLAS、cuDNN、architecture、選択した関連 package を確認し、`compile` は `torch.compile` も追加します。
 
 ## uv へ渡す環境

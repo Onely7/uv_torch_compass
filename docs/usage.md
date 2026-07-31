@@ -106,11 +106,13 @@ uv-torch-compass plan \
 
 Minor mode is not an automatic fallback. If it selects a runtime newer than the driver's normal support level, the successful result includes a warning.
 
-When the candidate lock contains vLLM, the framework probe runs automatically. The option records an explicit request but does not duplicate the check. It checks installed metadata, importability, the native extension, and the selected CPU or CUDA platform. It does not download a model, allocate a model cache, or start workers.
+When the candidate lock contains vLLM, artifact and framework checks run automatically. The option records an explicit runtime request but does not duplicate automatic detection. Before the full dependency install, supported uv versions extract only the locked vLLM wheel and compare its ELF CUDA libraries with the candidate. The later probe checks installed metadata, importability, the native extension, and the selected CPU or CUDA platform. Neither check downloads a model, allocates a model cache, or starts workers.
+
+uv 0.11.28 is the tested minimum. An older version is allowed with an upgrade warning. If it does not advertise `--only-install-package` and `--no-build-package`, wheel preflight is skipped and the complete runtime path remains required.
 
 ## Understanding candidate failures
 
-Candidate work is split into `lock`, `install`, `runtime`, and `framework` phases. A failure after `lock` retains the resolved PyTorch versions. This means an unavailable wheel for another dependency is reported as that package's blocker, with its dependency path and platform, instead of being described as a missing PyTorch backend.
+Candidate work is split into `lock`, `artifact`, `install`, `runtime`, and `framework` phases. A failure after `lock` retains the resolved PyTorch and framework versions. This means an unavailable wheel for another dependency is reported as that package's blocker, with its dependency path and platform, instead of being described as a missing PyTorch backend. CUDA ABI, native-symbol, platform, ordinary import, and Python API incompatibilities have distinct failure kinds. A backend-independent API failure stops redundant candidate installs.
 
 For a transitive setup, this is enough:
 

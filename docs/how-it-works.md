@@ -32,12 +32,16 @@ flowchart TD
     Lock[Lock the complete graph<br/>and safely parse uv.lock]
     Anchors{Do all discovered PyTorch packages<br/>use the selected index?}
     Relock[Add each missing bare source anchor once<br/>then lock again]
+    Artifact[Extract only the locked vLLM wheel<br/>without importing or executing it]
+    ArtifactPolicy{Do the reviewed catalog and ELF libraries<br/>match this backend?}
+    Narrow[Narrow candidates to the required CUDA variant<br/>or stop when none is driver-compatible]
     Temporary[Install the verified lock<br/>in a temporary environment]
     Runtime[Verify resolved CUDA components<br/>Run tensor and library checks]
     Framework[Run automatic or requested bounded checks<br/>without loading user models]
     CandidateResult{Did the candidate pass?}
     Diagnose[Classify the redacted uv failure<br/>Record package, requirement, and index]
-    More{Is another candidate available?}
+    Independent{Is the failure independent<br/>of the backend?}
+    More{Is another relevant candidate available?}
     Selected[Select the first candidate that passed]
     Action{plan or apply?}
     Plan[Show the proposed pyproject.toml change]
@@ -66,9 +70,13 @@ flowchart TD
     Driver -- No --> CPU --> Environment
     Environment --> Roots --> SourcePolicy --> Lock --> Anchors
     Anchors -- No --> Relock --> Lock
-    Anchors -- Yes --> Temporary --> Runtime --> Framework --> CandidateResult
+    Anchors -- Yes --> Artifact --> ArtifactPolicy
+    ArtifactPolicy -- Yes or unknown --> Temporary --> Runtime --> Framework --> CandidateResult
+    ArtifactPolicy -- No --> Narrow --> More
     CandidateResult -- Yes --> Selected --> Action
-    CandidateResult -- No --> Diagnose --> More
+    CandidateResult -- No --> Diagnose --> Independent
+    Independent -- Yes --> Failed
+    Independent -- No --> More
     More -- Yes --> Environment
     More -- No --> Failed
 
@@ -84,7 +92,7 @@ flowchart TD
 
 Candidate tests run in temporary uv projects and virtual environments, so failed candidates do not modify the target project. The temporary resolver targets the selected interpreter implementation, Python minor version, Linux, and CPU architecture. Relevant source and resolution policy is copied into that project, while only PyTorch is redirected to the candidate index. The graph is locked first, each transitive PyTorch source is verified, and that exact lock is installed only after the sources converge. Only `apply` writes the selected index. If an error occurs after backups are created, the tool restores the original files and attempts to recover the project environment. Report writing happens after a successful transaction; a report-only failure does not undo a valid applied project.
 
-Locking, installation, runtime validation, and framework validation are separate phases. A successful lock records the resolved PyTorch packages before installation begins. If a later dependency such as `xgrammar` has no wheel, uv-torch-compass reports that package and its dependency path rather than discarding the PyTorch result. Known uv errors are interpreted only after credentials and control characters are removed. Unknown formats are reported as unknown rather than guessed, with the complete redacted output retained in the private log.
+Locking, artifact inspection, installation, runtime validation, and framework validation are separate phases. A successful lock records the resolved PyTorch packages before installation begins. If a later dependency such as `xgrammar` has no wheel, uv-torch-compass reports that package and its dependency path rather than discarding the PyTorch result. Known uv errors are interpreted only after credentials and control characters are removed. Common English words are never accepted as package names, and unknown formats are reported as unknown rather than guessed. Complete redacted output remains in the private log.
 
 ## Python selection
 
@@ -147,7 +155,11 @@ Stable failures never switch to nightly automatically. Nightly candidate install
 
 ## Framework checks
 
-When resolved package metadata contains vLLM, a bounded integration check runs automatically after the PyTorch runtime probe. `--framework-probe vllm` records the same check as explicitly requested and is de-duplicated with automatic detection. It confirms the installed vLLM version, normal import, native extension import, and whether vLLM selected the expected CPU or CUDA platform. It does not download a model, start an engine, launch workers, or intentionally allocate model-sized GPU memory. The same check runs again after `apply` and during `check`.
+When the lock contains vLLM, uv-torch-compass first tries to extract only that wheel with uv's selective-install flags. The wheel is never imported during this phase. A bounded standard-library parser reads ELF `DT_NEEDED` entries such as `libcudart.so.12` or `.13`. The result is combined with a small, reviewed offline catalog for official wheels. Local, Git, custom-index, and source distributions are not assigned an official-wheel variant by guesswork; they continue to runtime validation. A catalog/ELF contradiction fails closed.
+
+After PyTorch runtime validation, a bounded vLLM integration check runs automatically. `--framework-probe vllm` records the same check as explicitly requested and is de-duplicated with automatic detection. It confirms installed versions, normal import, native extension import, and the expected CPU or CUDA platform. Exceptions retain a redacted message and at most 12 path-bounded frames. `DTensor` and similar Python API failures are classified separately from missing CUDA libraries and undefined native symbols. A backend-independent API failure stops the remaining CUDA candidates; a CUDA ABI failure narrows the list to the required major or reviewed variant.
+
+Neither framework phase downloads a model, starts an engine, launches workers, or intentionally allocates model-sized GPU memory. The runtime check runs again after `apply` and during `check`. uv 0.11.28 is the tested minimum. Older uv releases receive a warning; when selective-install flags are missing, only the artifact phase falls back to the full validation path.
 
 When CUDA is required, missing NVIDIA information is an error. With `auto`, an absent `nvidia-smi` means the host is treated as CPU-only. If `nvidia-smi` exists but fails or returns malformed data, the command fails instead of treating uncertain NVIDIA state as a CPU-only host.
 

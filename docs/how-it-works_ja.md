@@ -32,12 +32,16 @@ flowchart TD
     Lock[依存グラフ全体を lock し<br/>uv.lock を安全に解析する]
     Anchors{見つかった PyTorch package は<br/>すべて選択 index を使うか}
     Relock[不足する version なし anchor を<br/>一度だけ追加して再 lock する]
+    Artifact[lock 済み vLLM wheel だけを展開する<br/>import や実行はしない]
+    ArtifactPolicy{確認済み catalog と ELF library は<br/>backend と一致するか}
+    Narrow[必要な CUDA variant だけに絞る<br/>driver 対応候補がなければ停止する]
     Temporary[検証済み lock を<br/>一時環境へ install する]
     Runtime[解決した CUDA component を確認し<br/>tensor と library の検証を行う]
     Framework[自動検出または明示した framework を検証する<br/>利用者の model は読み込まない]
     CandidateResult{候補は検証を通過したか}
     Diagnose[認証情報を除いた uv の失敗を分類し<br/>package、requirement、index を記録する]
-    More{次の候補があるか}
+    Independent{backend を変えても<br/>同じ失敗か}
+    More{次の関連候補があるか}
     Selected[最初に通過した候補を選ぶ]
     Action{plan か apply か}
     Plan[pyproject.toml の変更案を表示する]
@@ -66,9 +70,13 @@ flowchart TD
     Driver -- いいえ --> CPU --> Environment
     Environment --> Roots --> SourcePolicy --> Lock --> Anchors
     Anchors -- いいえ --> Relock --> Lock
-    Anchors -- はい --> Temporary --> Runtime --> Framework --> CandidateResult
+    Anchors -- はい --> Artifact --> ArtifactPolicy
+    ArtifactPolicy -- 一致または不明 --> Temporary --> Runtime --> Framework --> CandidateResult
+    ArtifactPolicy -- 不一致 --> Narrow --> More
     CandidateResult -- はい --> Selected --> Action
-    CandidateResult -- いいえ --> Diagnose --> More
+    CandidateResult -- いいえ --> Diagnose --> Independent
+    Independent -- はい --> Failed
+    Independent -- いいえ --> More
     More -- はい --> Environment
     More -- いいえ --> Failed
 
@@ -84,7 +92,7 @@ flowchart TD
 
 候補の検証には一時的な uv project と virtual environment を使うため、候補が失敗しても対象 project は変更されません。一時 resolver は、選択した interpreter implementation、Python minor version、Linux、CPU architecture だけを対象にします。関連する source と解決方針を引き継ぎ、PyTorch だけを候補 index へ向けます。最初に lock し、推移的な PyTorch source が同じ index に収束したことを確認してから、その lock を install します。選んだ index を書き込むのは `apply` だけです。backup 作成後にエラーが起きた場合は、元のファイルへ戻し、project 環境の復旧も試みます。
 
-lock、install、runtime 検証、framework 検証は別の phase です。lock に成功した時点で、解決済みの PyTorch package を保存します。その後 `xgrammar` などに利用可能な wheel がなくても、PyTorch の結果を捨てず、その package と依存経路を原因として表示します。既知の uv エラーは認証情報と制御文字を除去してから解析し、未知の形式を推測で補わず `unknown` として private log へ案内します。
+lock、artifact 検査、install、runtime 検証、framework 検証は別の phase です。lock に成功した時点で、解決済みの PyTorch package を保存します。その後 `xgrammar` などに利用可能な wheel がなくても、PyTorch の結果を捨てず、その package と依存経路を原因として表示します。既知の uv エラーは認証情報と制御文字を除去してから解析します。英文の構成語を package 名として受理せず、未知の形式は推測で補わず `unknown` として private log へ案内します。
 
 ## Python の選択
 
@@ -147,7 +155,11 @@ stable の失敗から nightly へ自動で移りません。nightly の install
 
 ## framework 検証
 
-解決済み package metadata に vLLM が含まれる場合、PyTorch runtime probe のあとに範囲を限定した連携確認を自動実行します。`--framework-probe vllm` は同じ検証を明示的な要求として記録し、自動検出との重複は除きます。インストール済み vLLM version、通常 import、native extension import、vLLM が選んだ CPU または CUDA platform を確認します。model の取得、engine の開始、worker の起動、model 規模の GPU memory 確保は行いません。
+lock に vLLM が含まれる場合、まず uv の選択 install option でその wheel だけを展開します。この phase では wheel を import しません。標準 library だけの parser が ELF の `DT_NEEDED` から `libcudart.so.12` や `.13` を読み取ります。公式 wheel について人が確認した小さな offline catalog と組み合わせて判定します。local、Git、独自 index、source distribution には公式 wheel の variant を推測で当てはめず、runtime 検証へ進みます。catalog と ELF が矛盾する場合は安全側で失敗します。
+
+PyTorch runtime probe のあとは、範囲を限定した vLLM 連携検証を自動実行します。`--framework-probe vllm` は同じ検証を明示的な要求として記録し、自動検出と重複しません。install 済み version、通常 import、native extension、CPU または CUDA platform を確認します。例外は認証情報を除去した message と最大 12 frame に制限します。`DTensor` などの Python API 失敗を、CUDA library 不足や native symbol 不一致とは分けて分類します。backend に依存しない API 失敗なら残り候補を止め、CUDA ABI 失敗なら必要な major または確認済み variant に候補を絞ります。
+
+どちらの framework phase も model の取得、engine の起動、worker の開始、model 規模の GPU memory 確保は行いません。`apply` 後と `check` でも runtime 検証を行います。検証済みの uv 最低 version は 0.11.28 です。古い uv では警告を出し、選択 install option がなければ artifact phase だけを完全検証へ fallback します。
 
 CUDA を必須にした場合、NVIDIA 情報の欠落はエラーです。`auto` では `nvidia-smi` がなければ CPU 専用 host として扱います。`nvidia-smi` が存在するのに失敗した場合や出力が不正な場合は、不明な NVIDIA 状態を CPU 専用とみなさず失敗します。
 
