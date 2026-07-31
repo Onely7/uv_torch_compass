@@ -5,6 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("uv-torch-compass")
 except PackageNotFoundError:  # pragma: no cover - source trees without install metadata
-    __version__ = "0.4.0"
+    __version__ = "0.5.0"
 
 __all__ = ["__version__"]
