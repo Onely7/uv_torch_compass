@@ -307,6 +307,21 @@ class ProbeRunner:
         return self.results.pop(0)
 
 
+class RecordingProbeRunner(ProbeRunner):
+    def __init__(self, results: list[CommandResult]) -> None:
+        super().__init__(results)
+        self.arguments: list[tuple[str, ...]] = []
+
+    def run(self, arguments, *, cwd=None, env=None, timeout_seconds=None):
+        self.arguments.append(tuple(str(argument) for argument in arguments))
+        return super().run(
+            arguments,
+            cwd=cwd,
+            env=env,
+            timeout_seconds=timeout_seconds,
+        )
+
+
 class ProbeReporter:
     def __init__(self) -> None:
         self.warnings: list[str] = []
@@ -465,6 +480,132 @@ def test_probe_auto_validates_installed_vllm(tmp_path: Path) -> None:
 
     assert outcome.framework_validation[0].framework is FrameworkProbe.VLLM
     assert outcome.framework_validation[0].trigger == "automatic"
+
+
+def test_characterizes_automatic_vllm_as_an_explicit_probe_argument(
+    tmp_path: Path,
+) -> None:
+    """Record how candidate auto-detection currently loses its trigger."""
+
+    class VllmUv(ProbeUv):
+        def sync_locked_candidate(
+            self,
+            path: Path,
+            project_dir: Path,
+            python: Path,
+        ) -> CommandResult:
+            result = super().sync_locked_candidate(path, project_dir, python)
+            metadata = path / "lib/python/site-packages/vllm-1.dist-info/METADATA"
+            metadata.parent.mkdir(parents=True, exist_ok=True)
+            metadata.write_text("Name: vllm\nVersion: 1\n", encoding="utf-8")
+            return result
+
+    runner = RecordingProbeRunner(
+        [
+            CommandResult(0, _report("cpu"), ""),
+            CommandResult(
+                0,
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "results": [
+                            {
+                                "framework": "vllm",
+                                "status": "PASS",
+                                "version": "1",
+                                "import_test": "PASS",
+                                "native_extension_test": "PASS",
+                                "platform_test": "PASS",
+                                "platform": "CpuPlatform",
+                                "error": "",
+                                "trigger": "automatic",
+                            }
+                        ],
+                    }
+                ),
+                "",
+            ),
+        ]
+    )
+    service = _service(tmp_path, VllmUv(), runner, ProbeReporter())
+
+    service.find_working_candidate((BackendCandidate("cpu"),))
+
+    framework_arguments = runner.arguments[-1]
+    assert "--framework" in framework_arguments
+    assert "--auto-detect" not in framework_arguments
+
+
+def test_characterizes_framework_failure_as_runtime_failure_and_retries(
+    tmp_path: Path,
+) -> None:
+    """Record the generic failure kind and repeated candidate work."""
+
+    class VllmUv(ProbeUv):
+        def sync_locked_candidate(
+            self,
+            path: Path,
+            project_dir: Path,
+            python: Path,
+        ) -> CommandResult:
+            result = super().sync_locked_candidate(path, project_dir, python)
+            metadata = path / "lib/python/site-packages/vllm-0.6.dist-info/METADATA"
+            metadata.parent.mkdir(parents=True, exist_ok=True)
+            metadata.write_text("Name: vllm\nVersion: 0.6.0\n", encoding="utf-8")
+            return result
+
+    def framework_document(status: str, error: str) -> str:
+        return json.dumps(
+            {
+                "schema_version": 1,
+                "results": [
+                    {
+                        "framework": "vllm",
+                        "status": status,
+                        "version": "0.6.0",
+                        "import_test": "FAIL" if status == "FAIL" else "PASS",
+                        "native_extension_test": (
+                            "FAIL" if status == "FAIL" else "PASS"
+                        ),
+                        "platform_test": "FAIL" if status == "FAIL" else "PASS",
+                        "platform": "CpuPlatform",
+                        "error": error,
+                        "trigger": "automatic",
+                    }
+                ],
+            }
+        )
+
+    runner = RecordingProbeRunner(
+        [
+            CommandResult(0, _report("cpu"), ""),
+            CommandResult(
+                1,
+                framework_document(
+                    "FAIL",
+                    "ImportError: cannot import name 'DTensor'",
+                ),
+                "",
+            ),
+            CommandResult(0, _report("cpu"), ""),
+            CommandResult(0, framework_document("PASS", ""), ""),
+        ]
+    )
+    service = _service(
+        tmp_path,
+        VllmUv(install_codes=[0, 0]),
+        runner,
+        ProbeReporter(),
+    )
+
+    outcome = service.find_working_candidate(
+        (BackendCandidate("cpu"), BackendCandidate("cpu"))
+    )
+
+    assert len(outcome.attempts) == 2
+    assert outcome.attempts[0].failure is not None
+    assert outcome.attempts[0].failure.kind.value == "runtime-validation"
+    assert outcome.attempts[1].status == "passed"
 
 
 def test_probe_rejects_failed_setup_and_invalid_runtime(tmp_path: Path) -> None:
