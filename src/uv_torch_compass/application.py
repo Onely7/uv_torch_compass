@@ -58,6 +58,7 @@ from uv_torch_compass.safe_transaction import (
 )
 from uv_torch_compass.target_state import ApplicationResult, TargetState
 from uv_torch_compass.uv_commands import UvCommandClient
+from uv_torch_compass.vllm_compatibility import framework_catalog_metadata
 from uv_torch_compass.workspace import WorkspaceContext, resolve_workspace
 
 _MINIMUM_TESTED_UV = Version("0.11.28")
@@ -720,6 +721,7 @@ def _metadata(
             "executable": str(python.executable),
         },
         "cuda_compatibility_catalog": compatibility_catalog_metadata(),
+        "framework_compatibility_catalog": framework_catalog_metadata(),
     }
     if nvidia is not None:
         metadata["gpu"] = {

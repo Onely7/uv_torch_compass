@@ -8,6 +8,7 @@ from uv_torch_compass.vllm_compatibility import (
     catalog_requirement,
     decide_vllm_compatibility,
     dependency_advisories,
+    framework_catalog_metadata,
     inspect_vllm_native_libraries,
 )
 
@@ -61,3 +62,14 @@ def test_inspects_vllm_cuda_soname_without_importing_it(tmp_path: Path) -> None:
 
     assert requirement.required_cuda_major == 13
     assert requirement.needed_libraries == ("libcudart.so.13", "libtorch.so")
+
+
+def test_framework_catalog_exposes_reviewed_provenance() -> None:
+    metadata = framework_catalog_metadata()
+
+    assert metadata["reviewed_date"] == "2026-08-01"
+    assert len(metadata["sources"]) == 2
+    assert {entry["version"] for entry in metadata["entries"]} == {
+        "0.6.0",
+        "0.26.0",
+    }

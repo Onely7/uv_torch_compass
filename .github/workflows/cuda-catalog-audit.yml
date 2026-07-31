@@ -1,4 +1,4 @@
-name: CUDA compatibility catalog audit
+name: CUDA and framework compatibility catalog audit
 
 on:
   workflow_dispatch:
@@ -53,4 +53,43 @@ jobs:
                   "compare it with NVIDIA release notes and update the review date."
               )
           print(f"catalog review age: {age} days")
+          PY
+      - name: Verify reviewed vLLM sources and published metadata
+        run: |
+          uv run --no-project --with packaging python - <<'PY'
+          import json
+          import urllib.request
+          from datetime import date
+
+          from uv_torch_compass.vllm_compatibility import framework_catalog_metadata
+
+          catalog = framework_catalog_metadata()
+          age = (date.today() - date.fromisoformat(catalog["reviewed_date"])).days
+          if age > 120:
+              raise SystemExit(
+                  f"vLLM compatibility catalog review is {age} days old; "
+                  "review official installation and package metadata again."
+              )
+          for source in catalog["sources"]:
+              request = urllib.request.Request(
+                  source,
+                  headers={"User-Agent": "uv-torch-compass-catalog-audit"},
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  if response.status >= 400:
+                      raise SystemExit(f"catalog source is unavailable: {source}")
+          for entry in catalog["entries"]:
+              metadata_url = f"https://pypi.org/pypi/vllm/{entry['version']}/json"
+              with urllib.request.urlopen(metadata_url, timeout=30) as response:
+                  metadata = json.load(response)
+              requirements = metadata["info"].get("requires_dist") or []
+              relevant = [
+                  item
+                  for item in requirements
+                  if item.lower().startswith(("torch", "nvidia-cuda"))
+              ]
+              print(
+                  f"vllm {entry['version']} ({entry['cuda_variant']}): "
+                  + (", ".join(relevant) or "no CUDA-related Requires-Dist entry")
+              )
           PY

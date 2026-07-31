@@ -250,6 +250,23 @@ def dependency_advisories(
     return tuple(matches)
 
 
+def framework_catalog_metadata() -> dict[str, object]:
+    """Return stable provenance metadata for reports and audit automation."""
+    return {
+        "reviewed_date": CATALOG_REVIEWED_DATE,
+        "sources": list(CATALOG_SOURCE_URLS),
+        "entries": [
+            {
+                "version": str(entry.version),
+                "cuda_variant": entry.cuda_variant,
+                "cuda_major": entry.cuda_major,
+                "source_url": entry.source_url,
+            }
+            for entry in _CATALOG
+        ],
+    }
+
+
 def _backend_identity(backend: str) -> tuple[str, int]:
     match = re.fullmatch(r"cu(?P<digits>[0-9]{2,3})", backend)
     if match is None:
