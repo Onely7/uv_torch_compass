@@ -37,6 +37,14 @@ class ProbeError(CompassError):
     """Indicate that a backend runtime probe returned unusable data."""
 
 
+class LockMetadataError(ProbeError):
+    """Indicate that candidate resolution metadata could not be read safely."""
+
+
+class UnsupportedLockSchemaError(LockMetadataError):
+    """Indicate that a fallback lockfile uses an unsupported schema version."""
+
+
 class ProjectUpdateError(CompassError):
     """Indicate that project files could not be updated or restored safely."""
 

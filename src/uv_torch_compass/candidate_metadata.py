@@ -19,12 +19,20 @@ class ResolutionEvidenceSource(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class LockSchemaIdentity:
+    """Identify the uv lock schema used by the fallback metadata reader."""
+
+    version: int
+    revision: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class WheelArtifact:
     """Identify one immutable wheel artifact reported by uv."""
 
     url: str
     hash: str
-    size: int
+    size: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +54,7 @@ class CandidateDependencyGraph:
     project_name: str
     packages: tuple[CandidatePackage, ...]
     evidence_source: ResolutionEvidenceSource = ResolutionEvidenceSource.LOCKFILE
+    lock_schema: LockSchemaIdentity | None = None
 
     def package(self, name: str) -> CandidatePackage | None:
         """Return the uniquely resolved package with the requested name."""

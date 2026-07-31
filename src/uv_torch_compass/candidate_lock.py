@@ -16,9 +16,14 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by Python 3.10 CI.
 from uv_torch_compass.candidate_metadata import (
     CandidateDependencyGraph,
     CandidatePackage,
+    LockSchemaIdentity,
     WheelArtifact,
 )
-from uv_torch_compass.errors import ProbeError
+from uv_torch_compass.errors import (
+    LockMetadataError,
+    ProbeError,
+    UnsupportedLockSchemaError,
+)
 from uv_torch_compass.redaction import redact
 
 _MAX_LOCK_BYTES = 32 * 1024 * 1024
@@ -59,14 +64,15 @@ def read_candidate_lock(
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ProbeError(f"failed to read candidate lockfile: {exc}") from exc
 
+    lock_schema = _lock_schema(document)
     raw_packages = document.get("package")
     if not isinstance(raw_packages, list):
-        raise ProbeError("candidate lockfile has no package array")
+        raise LockMetadataError("candidate lockfile has no package array")
     packages = tuple(_parse_package(item) for item in raw_packages)
     names = [package.name for package in packages]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
-        raise ProbeError(
+        raise LockMetadataError(
             "candidate lockfile contains ambiguous package identities: "
             + ", ".join(duplicates)
         )
@@ -82,10 +88,30 @@ def read_candidate_lock(
         }
     )
     if missing:
-        raise ProbeError(
+        raise LockMetadataError(
             "candidate lockfile references missing packages: " + ", ".join(missing)
         )
-    return CandidateDependencyGraph(normalized_project, packages)
+    return CandidateDependencyGraph(
+        normalized_project,
+        packages,
+        lock_schema=lock_schema,
+    )
+
+
+def _lock_schema(document: Mapping[str, object]) -> LockSchemaIdentity:
+    version = document.get("version")
+    revision = document.get("revision")
+    if not isinstance(version, int) or isinstance(version, bool) or version <= 0:
+        raise LockMetadataError("candidate lockfile has an invalid schema version")
+    if version != 1:
+        raise UnsupportedLockSchemaError(
+            f"candidate lockfile schema {version} is not supported"
+        )
+    if revision is not None and (
+        not isinstance(revision, int) or isinstance(revision, bool) or revision < 0
+    ):
+        raise LockMetadataError("candidate lockfile has an invalid revision")
+    return LockSchemaIdentity(version, revision)
 
 
 def _parse_package(value: object) -> CandidatePackage:
@@ -150,7 +176,9 @@ def _parse_artifact(value: object, *, package: str) -> WheelArtifact:
         raise ProbeError(
             f"candidate lockfile package {package!r} has an invalid wheel hash"
         )
-    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+    if size is not None and (
+        not isinstance(size, int) or isinstance(size, bool) or size <= 0
+    ):
         raise ProbeError(
             f"candidate lockfile package {package!r} has an invalid wheel size"
         )

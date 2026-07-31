@@ -97,10 +97,9 @@ def test_lock_snapshot_rejects_oversized_input(tmp_path: Path) -> None:
         read_candidate_lock(lock)
 
 
-def test_lock_snapshot_currently_rejects_wheel_without_size(
+def test_lock_snapshot_accepts_wheel_without_size(
     tmp_path: Path,
 ) -> None:
-    """Characterize the lock parser regression fixed by the next change."""
     lock = tmp_path / "uv.lock"
     _write_lock(
         lock,
@@ -120,5 +119,59 @@ wheels = [
 """,
     )
 
+    snapshot = read_candidate_lock(lock)
+
+    torch = snapshot.package("torch")
+    assert torch is not None
+    assert torch.wheels[0].size is None
+    assert snapshot.lock_schema is not None
+    assert snapshot.lock_schema.version == 1
+
+
+@pytest.mark.parametrize("size", ["unknown", True, 0, -1])
+def test_lock_snapshot_rejects_invalid_present_wheel_size(
+    tmp_path: Path,
+    size: object,
+) -> None:
+    lock = tmp_path / "uv.lock"
+    rendered_size = f'"{size}"' if isinstance(size, str) else str(size).lower()
+    _write_lock(
+        lock,
+        f"""
+[[package]]
+name = "uv-torch-compass-candidate"
+version = "0"
+dependencies = [{{ name = "torch" }}]
+
+[[package]]
+name = "torch"
+version = "2.4.0+cu121"
+source = {{ registry = "https://download.pytorch.org/whl/cu121" }}
+wheels = [
+    {{ url = "https://download.pytorch.org/whl/cu121/torch.whl", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", size = {rendered_size} }},
+]
+""",
+    )
+
     with pytest.raises(ProbeError, match="invalid wheel size"):
+        read_candidate_lock(lock)
+
+
+def test_lock_snapshot_validates_schema_and_revision(tmp_path: Path) -> None:
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        'version = 1\nrevision = 3\n[[package]]\nname = "uv-torch-compass-candidate"\nversion = "0"\n',
+        encoding="utf-8",
+    )
+
+    snapshot = read_candidate_lock(lock)
+
+    assert snapshot.lock_schema is not None
+    assert snapshot.lock_schema.revision == 3
+
+    lock.write_text(
+        'version = 2\n[[package]]\nname = "uv-torch-compass-candidate"\nversion = "0"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ProbeError, match="schema 2"):
         read_candidate_lock(lock)
