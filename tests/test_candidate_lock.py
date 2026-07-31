@@ -5,6 +5,8 @@ import pytest
 from uv_torch_compass.candidate_lock import read_candidate_lock
 from uv_torch_compass.errors import ProbeError
 
+_LOCK_FIXTURES = Path(__file__).parent / "fixtures" / "locks"
+
 
 def _write_lock(path: Path, packages: str) -> None:
     path.write_text(
@@ -126,6 +128,28 @@ wheels = [
     assert torch.wheels[0].size is None
     assert snapshot.lock_schema is not None
     assert snapshot.lock_schema.version == 1
+
+
+@pytest.mark.parametrize(
+    "filename, backend",
+    [
+        ("uv-0.9.28-cu121.lock", "cu121"),
+        ("uv-0.11.28-cu126.lock", "cu126"),
+        ("uv-0.11.28-cu128.lock", "cu128"),
+        ("uv-0.11.28-cu129.lock", "cu129"),
+    ],
+)
+def test_lock_fixtures_accept_official_wheels_without_size(
+    filename: str,
+    backend: str,
+) -> None:
+    snapshot = read_candidate_lock(_LOCK_FIXTURES / filename)
+
+    torch = snapshot.package("torch")
+    assert torch is not None
+    assert torch.version.endswith(f"+{backend}")
+    assert torch.source_url.endswith(f"/whl/{backend}")
+    assert torch.wheels[0].size is None
 
 
 @pytest.mark.parametrize("size", ["unknown", True, 0, -1])

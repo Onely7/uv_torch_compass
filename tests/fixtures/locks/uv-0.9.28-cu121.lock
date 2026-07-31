@@ -1,0 +1,16 @@
+version = 1
+revision = 2
+
+[[package]]
+name = "uv-torch-compass-candidate"
+version = "0"
+source = { virtual = "." }
+dependencies = [{ name = "torch" }]
+
+[[package]]
+name = "torch"
+version = "2.4.0+cu121"
+source = { registry = "https://download.pytorch.org/whl/cu121" }
+wheels = [
+    { url = "https://download.pytorch.org/whl/cu121/torch-2.4.0%2Bcu121-cp312-cp312-linux_x86_64.whl", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+]
