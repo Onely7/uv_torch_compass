@@ -700,20 +700,17 @@ def test_vllm_catalog_rejects_cuda_mismatch_before_full_install(
 
     attempts = captured.value.attempts
     assert attempts[0].stage == "artifact"
-    assert attempts[0].failure is not None
-    assert attempts[0].failure.kind.value == "framework-cuda-abi"
+    assert attempts[0].status == "skipped"
+    assert "cu130" in attempts[0].reason
     assert attempts[1].status == "skipped"
     assert "cu130" in attempts[1].reason
     assert uv.full_installs == 0
-    # The second lock only converges transitive PyTorch source anchors; the
-    # rejected vLLM version itself is never changed and resolved again.
-    assert uv.lock_calls == 2
+    assert uv.lock_calls == 0
 
 
-def test_exact_vllm_requirement_is_currently_locked_before_catalog_filtering(
+def test_exact_vllm_requirement_filters_candidates_before_locking(
     tmp_path: Path,
 ) -> None:
-    """Characterize exact vLLM filtering after, rather than before, each lock."""
 
     class Vllm060Uv(ProbeUv):
         def __init__(self) -> None:
@@ -753,12 +750,7 @@ def test_exact_vllm_requirement_is_currently_locked_before_catalog_filtering(
             (BackendCandidate("cu124"), BackendCandidate("cu121"))
         )
 
-    assert uv.locked_indexes == [
-        "pytorch-cu124",
-        "pytorch-cu124",
-        "pytorch-cu121",
-        "pytorch-cu121",
-    ]
+    assert uv.locked_indexes == ["pytorch-cu121", "pytorch-cu121"]
 
 
 def test_install_failure_preserves_structured_resolution_context(

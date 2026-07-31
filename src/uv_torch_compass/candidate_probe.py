@@ -50,6 +50,9 @@ from uv_torch_compass.errors import (
     ProbeError,
 )
 from uv_torch_compass.framework_artifact import FrameworkArtifactInspector
+from uv_torch_compass.framework_candidate_policy import (
+    direct_vllm_candidate_constraint,
+)
 from uv_torch_compass.framework_diagnostics import (
     artifact_failure,
     catalog_dependency_failure,
@@ -120,7 +123,15 @@ class CandidateProbeService:
             CommandError: If every candidate fails installation or runtime checks.
         """
         attempts = list(prior_attempts)
-        required_backend: str | None = None
+        direct_constraint = direct_vllm_candidate_constraint(
+            self.requirements,
+            self.target_pyproject,
+        )
+        required_backend = (
+            direct_constraint.required_backend
+            if direct_constraint is not None
+            else None
+        )
         required_cuda_major: int | None = None
         for candidate in candidates:
             skip_reason = _framework_candidate_skip_reason(
@@ -793,7 +804,7 @@ def _framework_candidate_skip_reason(
     required_cuda_major: int | None,
 ) -> str | None:
     if required_backend is not None and candidate.value != required_backend:
-        return f"vLLM requires {required_backend}; this candidate was not installed"
+        return f"vLLM requires {required_backend}; this candidate was not resolved or installed"
     if required_cuda_major is None:
         return None
     if not candidate.is_cuda or _cuda_major(candidate.value) != required_cuda_major:
