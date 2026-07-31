@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/Onely7/uv_torch_compass/compare/v0.4.0...v0.5.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* candidate locking, transitive PyTorch source anchoring, framework validation, and JSON report contracts have changed.
+
+### Features
+
+* resolve transitive PyTorch packages for the selected Linux environment ([4c8d13b](https://github.com/Onely7/uv_torch_compass/commit/4c8d13b9dbcd1864ffa5114ba5135b657f87e0f6))
+
 ## [0.4.0](https://github.com/Onely7/uv_torch_compass/compare/v0.3.0...v0.4.0) (2026-07-27)
 
 
