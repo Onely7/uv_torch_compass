@@ -45,6 +45,7 @@ class CandidatePackage:
     dependencies: tuple[str, ...]
     source_kind: str = "registry"
     wheels: tuple[WheelArtifact, ...] = ()
+    package_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)

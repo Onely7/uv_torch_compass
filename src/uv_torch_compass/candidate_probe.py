@@ -18,8 +18,12 @@ from uv_torch_compass.candidate_failures import (
     FrameworkFailureKind,
 )
 from uv_torch_compass.candidate_lock import read_candidate_lock
+from uv_torch_compass.candidate_metadata import CandidateDependencyGraph
 from uv_torch_compass.candidate_project import render_candidate_project
 from uv_torch_compass.candidate_resolution import CandidateResolution
+from uv_torch_compass.candidate_workspace_metadata import (
+    read_candidate_workspace_metadata,
+)
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
@@ -102,6 +106,7 @@ class CandidateProbeService:
         repr=False,
     )
     _artifact_fallback_warned: bool = field(default=False, init=False, repr=False)
+    _metadata_fallback_warned: bool = field(default=False, init=False, repr=False)
 
     def find_working_candidate(
         self,
@@ -491,7 +496,7 @@ class CandidateProbeService:
                 resolution = CandidateResolution(
                     candidate,
                     self.execution_environment,
-                    read_candidate_lock(project.parent / "uv.lock"),
+                    self._candidate_dependency_graph(project.parent),
                 )
             except ProbeError as exc:
                 self.reporter.warn(f"candidate {candidate.value}: {exc}")
@@ -539,6 +544,25 @@ class CandidateProbeService:
             runtime_failure("Transitive PyTorch source anchoring did not converge."),
             stage="lock",
         )
+
+    def _candidate_dependency_graph(
+        self,
+        project_dir: Path,
+    ) -> CandidateDependencyGraph:
+        """Read a candidate graph through uv's JSON boundary when available."""
+        metadata_method = getattr(self.uv, "workspace_metadata", None)
+        if callable(metadata_method):
+            result = metadata_method(project_dir)
+            self.reporter.detail(result.stdout + result.stderr)
+            if result.returncode == 0:
+                return read_candidate_workspace_metadata(result.stdout)
+            if not self._metadata_fallback_warned:
+                self.reporter.warn(
+                    "uv workspace metadata resolution is unavailable; using the "
+                    "validated lockfile fallback"
+                )
+                self._metadata_fallback_warned = True
+        return read_candidate_lock(project_dir / "uv.lock")
 
     def _finalize_candidate(
         self,
