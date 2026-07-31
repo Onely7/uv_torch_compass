@@ -48,7 +48,7 @@ def test_vllm_probe_reports_bounded_failure(monkeypatch) -> None:
     result = framework_probe._probe_vllm("cpu")
 
     assert result["status"] == "FAIL"
-    assert "native extension" in result["error"]
+    assert "native extension" in str(result["error"])
 
 
 def test_main_emits_one_json_document(monkeypatch, capsys) -> None:

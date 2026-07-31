@@ -1,7 +1,9 @@
 import json
+from typing import cast
 
 import pytest
 
+from uv_torch_compass.candidate_failures import FrameworkProbeTrigger
 from uv_torch_compass.domain import FrameworkProbe
 from uv_torch_compass.errors import ProbeError
 from uv_torch_compass.framework_validation import (
@@ -40,7 +42,7 @@ def test_parses_requested_framework_validation() -> None:
             "PASS",
             "CudaPlatform",
             "",
-            "explicit",
+            FrameworkProbeTrigger.EXPLICIT,
         ),
     )
     assert framework_validation_document(validations)[0]["framework"] == "vllm"
@@ -160,8 +162,10 @@ def test_schema_two_parses_bounded_exception_and_package_versions() -> None:
     assert results[0].exception is not None
     assert results[0].exception.frames[0].filename == "modeling_utils.py"
     assert results[0].packages[0].name == "transformers"
-    assert document[0]["exception"]["missing_symbol"] == "DTensor"
-    assert document[0]["packages"][0]["version"] == "5.14.1"
+    exception = cast(dict[str, object], document[0]["exception"])
+    packages = cast(list[dict[str, object]], document[0]["packages"])
+    assert exception["missing_symbol"] == "DTensor"
+    assert packages[0]["version"] == "5.14.1"
 
 
 @pytest.mark.parametrize(

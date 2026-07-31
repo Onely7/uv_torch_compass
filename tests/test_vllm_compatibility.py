@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 from test_elf_dependencies import _write_elf
 
@@ -66,10 +67,12 @@ def test_inspects_vllm_cuda_soname_without_importing_it(tmp_path: Path) -> None:
 
 def test_framework_catalog_exposes_reviewed_provenance() -> None:
     metadata = framework_catalog_metadata()
+    sources = cast(list[str], metadata["sources"])
+    entries = cast(list[dict[str, object]], metadata["entries"])
 
     assert metadata["reviewed_date"] == "2026-08-01"
-    assert len(metadata["sources"]) == 2
-    assert {entry["version"] for entry in metadata["entries"]} == {
+    assert len(sources) == 2
+    assert {entry["version"] for entry in entries} == {
         "0.6.0",
         "0.26.0",
     }

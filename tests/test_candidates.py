@@ -23,6 +23,7 @@ from uv_torch_compass.domain import (
     FrameworkProbe,
     ProbeProfile,
     ProjectRequirements,
+    ResolutionFailure,
     Scope,
     ScopedRequirement,
 )
@@ -733,7 +734,7 @@ def test_install_failure_preserves_structured_resolution_context(
     attempts = captured.value.attempts
     assert len(attempts) == 1
     failure = attempts[0].failure
-    assert failure is not None
+    assert isinstance(failure, ResolutionFailure)
     assert attempts[0].stage == "install"
     assert attempts[0].resolution is not None
     assert attempts[0].resolution.pytorch_packages[0].version == "2.7.0"
@@ -803,7 +804,7 @@ def test_install_failure_uses_lock_graph_for_transitive_blocker_path(
         service.find_working_candidate((BackendCandidate("cu128"),))
 
     failure = captured.value.attempts[0].failure
-    assert failure is not None
+    assert isinstance(failure, ResolutionFailure)
     assert failure.dependency_paths == (("project", "vllm==0.19.1", "xgrammar==0.2.4"),)
     assert failure.platform == "manylinux_2_39_x86_64"
 

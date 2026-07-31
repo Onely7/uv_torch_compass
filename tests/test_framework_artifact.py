@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import cast
 
 from test_elf_dependencies import _write_elf
 
@@ -12,6 +13,7 @@ from uv_torch_compass.candidate_resolution import CandidateResolution
 from uv_torch_compass.command_runner import CommandResult
 from uv_torch_compass.domain import BackendCandidate
 from uv_torch_compass.framework_artifact import FrameworkArtifactInspector
+from uv_torch_compass.uv_commands import UvCommandClient
 
 
 class ArtifactUv:
@@ -81,7 +83,7 @@ def _inspector(
     tmp_path: Path, uv: ArtifactUv, capabilities=frozenset()
 ) -> FrameworkArtifactInspector:
     return FrameworkArtifactInspector(
-        uv,  # type: ignore[arg-type]
+        cast(UvCommandClient, uv),
         tmp_path,
         Path("/usr/bin/python3"),
         capabilities,
