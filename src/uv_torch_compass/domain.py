@@ -15,6 +15,12 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from uv_torch_compass.candidate_failures import (
+    FailedIndex,
+    FailedPackage,
+    ResolutionFailure,
+    ResolutionFailureKind,
+)
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
     CompatibilityPolicy,
@@ -23,6 +29,13 @@ from uv_torch_compass.errors import ConfigurationError, ProbeError
 
 if TYPE_CHECKING:
     from uv_torch_compass.candidate_resolution import CandidateResolution
+
+__all__ = [
+    "FailedIndex",
+    "FailedPackage",
+    "ResolutionFailure",
+    "ResolutionFailureKind",
+]
 
 _CUDA_BACKEND_PATTERN = re.compile(r"cu[0-9]{2,3}", re.ASCII)
 _GPU_IDENTIFIER_PATTERN = re.compile(r"[A-Za-z0-9_.:-]+", re.ASCII)
@@ -575,52 +588,6 @@ class CandidateAttempt:
     compatibility: str
     failure: ResolutionFailure | None = None
     resolution: CandidateResolution | None = None
-
-
-class ResolutionFailureKind(str, Enum):
-    """Classify a candidate failure without exposing uv implementation details."""
-
-    NO_COMPATIBLE_DISTRIBUTION = "no-compatible-distribution"
-    DEPENDENCY_CONFLICT = "dependency-conflict"
-    WHEEL_UNAVAILABLE = "wheel-unavailable"
-    BUILD_FAILURE = "build-failure"
-    NETWORK = "network"
-    AUTHENTICATION = "authentication"
-    TIMEOUT = "timeout"
-    RUNTIME_VALIDATION = "runtime-validation"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True, slots=True)
-class FailedPackage:
-    """Identify the package constraint implicated by uv when available."""
-
-    name: str
-    version: str | None = None
-    requirement: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class FailedIndex:
-    """Identify the package index implicated by a candidate failure."""
-
-    name: str
-    url: str
-
-
-@dataclass(frozen=True, slots=True)
-class ResolutionFailure:
-    """Describe an actionable, redacted candidate resolution failure."""
-
-    kind: ResolutionFailureKind
-    summary: str
-    package: FailedPackage | None = None
-    required_by: tuple[str, ...] = ()
-    index: FailedIndex | None = None
-    platform: str | None = None
-    suggestions: tuple[str, ...] = ()
-    dependency_paths: tuple[tuple[str, ...], ...] = ()
-    available_wheel_platforms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
