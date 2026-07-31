@@ -13,7 +13,11 @@ from typing import Any, TextIO
 
 from uv_torch_compass.candidate_failures import (
     FrameworkFailure,
+    FrameworkFailureKind,
     ResolutionFailure,
+    ResolutionFailureKind,
+    ToolFailureKind,
+    ToolValidationFailure,
 )
 from uv_torch_compass.domain import CommandOutcome, OutputFormat, RunOptions
 from uv_torch_compass.errors import ProjectUpdateError, ReportError
@@ -224,8 +228,7 @@ class CommandReporter:
         ]
         if failed:
             print("Failed candidates:", file=sys.stdout)
-            for attempt in failed:
-                _print_failed_attempt(attempt)
+            _print_failed_attempts(failed)
             blocking = document.get("blocking_summary")
             if isinstance(blocking, dict) and blocking.get("summary"):
                 print(f"Blocking summary: {blocking['summary']}", file=sys.stdout)
@@ -288,7 +291,7 @@ def _result_document(
                 "reason": outcome.compatibility.reason,
             }
     return {
-        "schema_version": 7,
+        "schema_version": 8,
         "operation": options.operation.value,
         "status": outcome.status,
         "exit_code": exit_code,
@@ -321,11 +324,16 @@ def _result_document(
                 "framework_compatibility": _framework_compatibility_document(
                     attempt.framework_compatibility
                 ),
+                "framework": {
+                    "requested": list(attempt.framework_requests),
+                    "resolved": _resolved_framework_versions(attempt.resolution),
+                },
                 "phases": _phase_document(attempt.stage, attempt.status),
             }
             for attempt in outcome.attempts
         ],
         "blocking_summary": _blocking_summary(outcome),
+        "failure_category": _failure_category(outcome),
         "selected_backend": selected_backend,
         "selected_index": selected_index,
         "selected_gpu": selected_gpu,
@@ -344,6 +352,9 @@ def _result_document(
         "required_environment": outcome.metadata.get("required_environment", ""),
         "probe_contract": outcome.metadata.get("probe_contract", {}),
         "framework_validation": outcome.metadata.get("framework_validation", []),
+        "framework_version_selection": outcome.metadata.get(
+            "framework_version_selection"
+        ),
         "operation_state": outcome.metadata.get(
             "operation_state",
             {"applied": outcome.applied, "report_written": False},
@@ -364,6 +375,13 @@ def _result_document(
 def _failure_document(failure: Any) -> dict[str, Any] | None:
     if failure is None:
         return None
+    if isinstance(failure, ToolValidationFailure):
+        return {
+            "kind": failure.kind.value,
+            "summary": failure.summary,
+            "suggestions": list(failure.suggestions),
+            "backend_independent": True,
+        }
     package = (
         {
             "name": failure.package.name,
@@ -445,7 +463,22 @@ def _resolution_document(resolution: Any) -> dict[str, Any] | None:
             for package in resolution.framework_packages
         },
         "package_count": len(resolution.lock.packages),
+        "evidence_source": resolution.lock.evidence_source.value,
+        "lock_schema": (
+            {
+                "version": resolution.lock.lock_schema.version,
+                "revision": resolution.lock.lock_schema.revision,
+            }
+            if resolution.lock.lock_schema is not None
+            else None
+        ),
     }
+
+
+def _resolved_framework_versions(resolution: Any) -> dict[str, str]:
+    if resolution is None:
+        return {}
+    return {package.name: package.version for package in resolution.framework_packages}
 
 
 def _phase_document(terminal_stage: str, status: str) -> dict[str, str]:
@@ -488,17 +521,17 @@ def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
         failure = attempt.failure
         if failure is None:
             continue
-        package_name = failure.package.name if failure.package is not None else None
-        package_version = (
-            failure.package.version if failure.package is not None else None
-        )
+        package = getattr(failure, "package", None)
+        package_name = package.name if package is not None else None
+        package_version = package.version if package is not None else None
         platform = failure.platform if isinstance(failure, ResolutionFailure) else None
+        dependency_paths = getattr(failure, "dependency_paths", ())
         fingerprint = (
             failure.kind.value,
             package_name,
             package_version,
             platform,
-            failure.dependency_paths,
+            dependency_paths,
         )
         blocker = blockers.setdefault(
             fingerprint,
@@ -507,7 +540,7 @@ def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
                 "package": package_name,
                 "version": package_version,
                 "platform": platform,
-                "dependency_paths": [list(path) for path in failure.dependency_paths],
+                "dependency_paths": [list(path) for path in dependency_paths],
                 "candidates": [],
                 "backend_independent": (
                     failure.backend_independent
@@ -529,6 +562,43 @@ def _blocking_summary(outcome: CommandOutcome) -> dict[str, Any] | None:
         "common_blockers": list(blockers.values()),
         "suggestions": list(dict.fromkeys(suggestions)),
     }
+
+
+def _failure_category(outcome: CommandOutcome) -> str | None:
+    failures = tuple(
+        attempt.failure for attempt in outcome.attempts if attempt.failure is not None
+    )
+    if not failures:
+        return None
+    if any(
+        isinstance(failure, ToolValidationFailure)
+        and failure.kind is ToolFailureKind.UNSUPPORTED_LOCK_SCHEMA
+        for failure in failures
+    ):
+        return "lock-schema-unsupported"
+    if any(isinstance(failure, ToolValidationFailure) for failure in failures):
+        return "tool-validation-error"
+    if any(
+        isinstance(failure, FrameworkFailure)
+        and failure.kind is FrameworkFailureKind.API_INCOMPATIBILITY
+        for failure in failures
+    ):
+        return "framework-api-incompatible"
+    if any(
+        isinstance(failure, FrameworkFailure)
+        and failure.kind is FrameworkFailureKind.CUDA_ABI
+        for failure in failures
+    ):
+        return "framework-cuda-incompatible"
+    if any(isinstance(failure, FrameworkFailure) for failure in failures):
+        return "framework-validation-failed"
+    if any(
+        isinstance(failure, ResolutionFailure)
+        and failure.kind is ResolutionFailureKind.RUNTIME_VALIDATION
+        for failure in failures
+    ):
+        return "runtime-validation-failed"
+    return "dependency-unsatisfiable"
 
 
 def _framework_compatibility_document(decision: Any) -> dict[str, Any] | None:
@@ -638,6 +708,39 @@ def _print_failed_attempt(attempt: dict[str, Any]) -> None:
         )
     for suggestion in failure.get("suggestions", []):
         print(f"    Suggestion: {suggestion}", file=sys.stdout)
+
+
+def _print_failed_attempts(attempts: list[dict[str, Any]]) -> None:
+    unavailable: list[dict[str, Any]] = []
+    remaining: list[dict[str, Any]] = []
+    for attempt in attempts:
+        failure = attempt.get("failure")
+        package = failure.get("package") if isinstance(failure, dict) else None
+        if (
+            isinstance(failure, dict)
+            and failure.get("kind") == "no-compatible-distribution"
+            and isinstance(package, dict)
+            and package.get("name") in {"torch", "torchvision", "torchaudio"}
+        ):
+            unavailable.append(attempt)
+        else:
+            remaining.append(attempt)
+    if len(unavailable) > 1:
+        backends = ", ".join(
+            dict.fromkeys(str(attempt["backend"]) for attempt in unavailable)
+        )
+        print(
+            "  - PyTorch builds were unavailable from: " + backends,
+            file=sys.stdout,
+        )
+        print(
+            "    See the JSON report or private log for each requirement and index.",
+            file=sys.stdout,
+        )
+    else:
+        remaining.extend(unavailable)
+    for attempt in remaining:
+        _print_failed_attempt(attempt)
 
 
 def _redact_document(value: Any) -> Any:

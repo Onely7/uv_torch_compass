@@ -16,6 +16,8 @@ from uv_torch_compass.candidate_failures import (
     FrameworkCompatibilityDecision,
     FrameworkFailure,
     FrameworkFailureKind,
+    ToolFailureKind,
+    ToolValidationFailure,
 )
 from uv_torch_compass.candidate_lock import read_candidate_lock
 from uv_torch_compass.candidate_metadata import CandidateDependencyGraph
@@ -47,7 +49,9 @@ from uv_torch_compass.errors import (
     CandidateResolutionError,
     CommandTimeoutError,
     ConfigurationError,
+    LockMetadataError,
     ProbeError,
+    UnsupportedLockSchemaError,
 )
 from uv_torch_compass.framework_artifact import FrameworkArtifactInspector
 from uv_torch_compass.framework_candidate_policy import (
@@ -127,6 +131,10 @@ class CandidateProbeService:
             CommandError: If every candidate fails installation or runtime checks.
         """
         attempts = list(prior_attempts)
+        framework_requests = tuple(
+            str(requirement)
+            for requirement in self.requirements.requirement_for("vllm")
+        )
         direct_constraint = direct_vllm_candidate_constraint(
             self.requirements,
             self.target_pyproject,
@@ -155,6 +163,7 @@ class CandidateProbeService:
                         "skipped",
                         skip_reason,
                         "incompatible",
+                        framework_requests=framework_requests,
                     )
                 )
                 continue
@@ -191,6 +200,7 @@ class CandidateProbeService:
                             failure,
                             result.resolution,
                             result.framework_compatibility,
+                            framework_requests,
                         )
                     )
                     rejected_vllm_versions.append(rejected_version)
@@ -214,6 +224,7 @@ class CandidateProbeService:
                         failure,
                         result.resolution,
                         result.framework_compatibility,
+                        framework_requests,
                     )
                 )
                 if isinstance(failure, FrameworkFailure):
@@ -225,6 +236,7 @@ class CandidateProbeService:
                                 candidate,
                                 "the same backend-independent framework failure "
                                 "would affect this candidate",
+                                framework_requests,
                             )
                         )
                         break
@@ -257,6 +269,7 @@ class CandidateProbeService:
                     outcome.compatibility.level.value,
                     resolution=outcome.resolution,
                     framework_compatibility=outcome.framework_compatibility,
+                    framework_requests=framework_requests,
                 )
             )
             if outcome.compatibility.level is CompatibilityLevel.MINOR:
@@ -586,10 +599,37 @@ class CandidateProbeService:
                     self.execution_environment,
                     self._candidate_dependency_graph(project.parent),
                 )
+            except UnsupportedLockSchemaError as exc:
+                self.reporter.warn(f"candidate {candidate.value}: {exc}")
+                return CandidateProbeResult.failed(
+                    ToolValidationFailure(
+                        ToolFailureKind.UNSUPPORTED_LOCK_SCHEMA,
+                        "The generated lockfile uses an unsupported schema.",
+                        (
+                            "Update uv-torch-compass or use a supported uv release.",
+                            "Inspect the private log for the reported schema identity.",
+                        ),
+                    ),
+                    stage="lock",
+                )
+            except LockMetadataError as exc:
+                self.reporter.warn(f"candidate {candidate.value}: {exc}")
+                return CandidateProbeResult.failed(
+                    ToolValidationFailure(
+                        ToolFailureKind.METADATA_VALIDATION,
+                        "The generated dependency metadata could not be validated safely.",
+                        ("Inspect the private log for the rejected metadata field.",),
+                    ),
+                    stage="lock",
+                )
             except ProbeError as exc:
                 self.reporter.warn(f"candidate {candidate.value}: {exc}")
                 return CandidateProbeResult.failed(
-                    runtime_failure("The candidate lockfile could not be validated."),
+                    ToolValidationFailure(
+                        ToolFailureKind.METADATA_VALIDATION,
+                        "The generated dependency metadata could not be read safely.",
+                        ("Inspect the private log for the metadata read failure.",),
+                    ),
                     stage="lock",
                 )
             mismatched = tuple(
@@ -904,6 +944,7 @@ def _skipped_framework_attempts(
     candidates: tuple[BackendCandidate, ...],
     current: BackendCandidate,
     reason: str,
+    framework_requests: tuple[str, ...] = (),
 ) -> tuple[CandidateAttempt, ...]:
     found_current = False
     skipped: list[CandidateAttempt] = []
@@ -919,6 +960,7 @@ def _skipped_framework_attempts(
                 "skipped",
                 reason,
                 "not-tested",
+                framework_requests=framework_requests,
             )
         )
     return tuple(skipped)

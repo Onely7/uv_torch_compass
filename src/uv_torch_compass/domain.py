@@ -591,6 +591,7 @@ class CandidateAttempt:
     failure: CandidateFailure | None = None
     resolution: CandidateResolution | None = None
     framework_compatibility: FrameworkCompatibilityDecision | None = None
+    framework_requests: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

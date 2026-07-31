@@ -143,7 +143,8 @@ class CompassApplication:
             if parsed_version < _MINIMUM_TESTED_UV:
                 self.reporter.warn(
                     f"uv {parsed_version} is older than the tested minimum "
-                    f"{_MINIMUM_TESTED_UV}; update uv for artifact preflight support"
+                    f"{_MINIMUM_TESTED_UV}; update uv for the latest metadata and "
+                    "artifact capabilities"
                 )
         if (
             self.options.operation is not Operation.CHECK

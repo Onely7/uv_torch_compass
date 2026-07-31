@@ -847,6 +847,37 @@ def test_install_failure_preserves_structured_resolution_context(
     assert failure.index.name == "pytorch-cu121"
 
 
+def test_unsupported_lock_schema_is_a_tool_validation_failure(
+    tmp_path: Path,
+) -> None:
+    class UnsupportedLockUv(ProbeUv):
+        def lock_candidate(self, project_dir: Path, python: Path) -> CommandResult:
+            result = super().lock_candidate(project_dir, python)
+            lock = project_dir / "uv.lock"
+            lock.write_text(
+                lock.read_text(encoding="utf-8").replace(
+                    "version = 1", "version = 2", 1
+                ),
+                encoding="utf-8",
+            )
+            return result
+
+    service = _service(
+        tmp_path,
+        UnsupportedLockUv(),
+        ProbeRunner([]),
+        ProbeReporter(),
+    )
+
+    with pytest.raises(CandidateResolutionError) as captured:
+        service.find_working_candidate((BackendCandidate("cpu"),))
+
+    failure = captured.value.attempts[0].failure
+    assert failure is not None
+    assert failure.kind.value == "unsupported-lock-schema"
+    assert captured.value.attempts[0].stage == "lock"
+
+
 def test_lock_reanchors_transitive_pytorch_packages_before_install(
     tmp_path: Path,
 ) -> None:
