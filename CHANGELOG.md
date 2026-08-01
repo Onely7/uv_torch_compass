@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/Onely7/uv_torch_compass/compare/v0.6.0...v0.7.0) (2026-08-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* JSON report schema is now version 8, and candidate metadata and vLLM version-selection contracts have changed.
+
+### Features
+
+* improve uv lock metadata and vLLM version selection ([6e3d8d6](https://github.com/Onely7/uv_torch_compass/commit/6e3d8d66dc3c90f91da603666decf5361c01dec4))
+
 ## [0.6.0](https://github.com/Onely7/uv_torch_compass/compare/v0.5.0...v0.6.0) (2026-07-31)
 
 
