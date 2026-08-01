@@ -29,6 +29,7 @@ from uv_torch_compass.domain import (
     ScopedRequirement,
 )
 from uv_torch_compass.errors import ConfigurationError, ProjectUpdateError
+from uv_torch_compass.framework_candidate_policy import FrameworkVersionSelection
 from uv_torch_compass.index_url import canonical_official_pytorch_url
 from uv_torch_compass.source_ownership import ManagedSourceAnchor
 
@@ -149,6 +150,7 @@ def render_project_configuration(
     numpy_lt2_required: bool,
     managed_anchors: tuple[ManagedSourceAnchor, ...] = (),
     required_environment: str | None = None,
+    framework_version_selection: FrameworkVersionSelection | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     """Render a comment-preserving project update without writing it.
 
@@ -241,6 +243,18 @@ def render_project_configuration(
                 )
             )
         uv = _ensure_table(tool, "uv")
+        if framework_version_selection is not None:
+            _apply_managed_framework_constraint(
+                uv,
+                state,
+                framework_version_selection,
+            )
+            changes.append(
+                "constrained "
+                f"{framework_version_selection.requested} to verified "
+                f"{framework_version_selection.package}=="
+                f"{framework_version_selection.resolved_version}"
+            )
         if required_environment is not None:
             _ensure_required_environment(uv, required_environment)
             changes.append("recorded the current Linux installation environment")
@@ -264,6 +278,55 @@ def render_project_configuration(
         raise
     except (OSError, ParseError, TypeError, ValueError) as exc:
         raise ProjectUpdateError(f"failed to update {pyproject}: {exc}") from exc
+
+
+def _apply_managed_framework_constraint(
+    uv: Any,
+    state: Any,
+    selection: FrameworkVersionSelection,
+) -> None:
+    raw_constraints = uv.get("constraint-dependencies", [])
+    if not isinstance(raw_constraints, list) or not all(
+        isinstance(item, str) for item in raw_constraints
+    ):
+        raise ProjectUpdateError("tool.uv.constraint-dependencies must be an array")
+    constraints = list(raw_constraints)
+    previous = _managed_framework_constraints(state)
+    for requirement in previous:
+        if requirement in constraints:
+            constraints.remove(requirement)
+    requirement = f"{selection.package}=={selection.resolved_version}"
+    if requirement not in constraints:
+        constraints.append(requirement)
+    uv["constraint-dependencies"] = constraints
+    value = tomlkit.inline_table()
+    value["package"] = selection.package
+    value["requested"] = selection.requested
+    value["requirement"] = requirement
+    state["managed-framework-constraints"] = [value]
+
+
+def _managed_framework_constraints(state: Mapping[str, object]) -> tuple[str, ...]:
+    raw = state.get("managed-framework-constraints", [])
+    if not isinstance(raw, list):
+        raise ProjectUpdateError("managed-framework-constraints must be an array")
+    requirements: list[str] = []
+    for item in raw:
+        if not isinstance(item, Mapping) or set(item) != {
+            "package",
+            "requested",
+            "requirement",
+        }:
+            raise ProjectUpdateError(
+                "managed-framework-constraints entries are invalid"
+            )
+        requirement = item.get("requirement")
+        if not isinstance(requirement, str):
+            raise ProjectUpdateError(
+                "managed-framework-constraints requirement must be a string"
+            )
+        requirements.append(requirement)
+    return tuple(requirements)
 
 
 def read_configured_backend(

@@ -133,7 +133,7 @@ def test_json_report_is_single_document_and_private(tmp_path: Path, capsys) -> N
 
     captured = capsys.readouterr()
     document = json.loads(captured.out)
-    assert document["schema_version"] == 7
+    assert document["schema_version"] == 8
     assert document["status"] == "planned"
     assert document["changes"] == ["one change"]
     attempt = document["candidate_attempts"][0]
@@ -258,6 +258,44 @@ def test_text_report_explains_failed_candidate(tmp_path: Path, capsys) -> None:
     assert "Required by: vllm>=0.25.0 -> torch==2.10.0" in captured.out
     assert "Index: pytorch-cu121" in captured.out
     assert "Suggestion: Select a compatible vLLM version." in captured.out
+
+
+def test_text_report_aggregates_repeated_pytorch_build_failures(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    attempts = tuple(
+        CandidateAttempt(
+            backend,
+            "lock",
+            "failed",
+            "The required package build is unavailable from this index.",
+            "strict",
+            ResolutionFailure(
+                ResolutionFailureKind.NO_COMPATIBLE_DISTRIBUTION,
+                "The required package build is unavailable from this index.",
+                FailedPackage("torch", requirement="torch==2.11.0"),
+                index=FailedIndex(
+                    f"pytorch-{backend}",
+                    f"https://download.pytorch.org/whl/{backend}",
+                ),
+            ),
+        )
+        for backend in ("cu124", "cu121", "cu118")
+    )
+    reporter = CommandReporter(_text_options(tmp_path), "0.7.0")
+
+    with reporter:
+        reporter.emit_final(
+            CommandOutcome("failed", False, None, attempts=attempts),
+            None,
+            exit_code=1,
+            error="no usable backend",
+        )
+
+    captured = capsys.readouterr()
+    assert "PyTorch builds were unavailable from: cu124, cu121, cu118" in captured.out
+    assert captured.out.count("The required package build is unavailable") == 0
 
 
 def test_report_explains_framework_cuda_abi_failure(tmp_path: Path, capsys) -> None:

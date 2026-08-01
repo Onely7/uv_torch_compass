@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,83 +13,35 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - exercised by Python 3.10 CI.
     import tomli as tomllib  # ty: ignore[unresolved-import]
 
-from uv_torch_compass.domain import PYTORCH_PACKAGES
-from uv_torch_compass.errors import ProbeError
+from uv_torch_compass.candidate_metadata import (
+    CandidateDependencyGraph,
+    CandidatePackage,
+    LockSchemaIdentity,
+    WheelArtifact,
+)
+from uv_torch_compass.errors import (
+    LockMetadataError,
+    ProbeError,
+    UnsupportedLockSchemaError,
+)
 from uv_torch_compass.redaction import redact
 
 _MAX_LOCK_BYTES = 32 * 1024 * 1024
 _MAX_ARTIFACTS_PER_PACKAGE = 512
 
 
-@dataclass(frozen=True, slots=True)
-class LockedArtifact:
-    """Identify one immutable wheel artifact recorded by uv."""
-
-    url: str
-    hash: str
-    size: int
-
-
-@dataclass(frozen=True, slots=True)
-class LockedPackage:
-    """Describe one resolved distribution and its direct dependency names."""
-
-    name: str
-    version: str
-    source_url: str
-    dependencies: tuple[str, ...]
-    source_kind: str = "registry"
-    wheels: tuple[LockedArtifact, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateLockSnapshot:
-    """Expose validated package identities and paths from one candidate lock."""
-
-    project_name: str
-    packages: tuple[LockedPackage, ...]
-
-    def package(self, name: str) -> LockedPackage | None:
-        """Return the uniquely resolved package with the requested name."""
-        normalized = str(canonicalize_name(name))
-        return next(
-            (package for package in self.packages if package.name == normalized),
-            None,
-        )
-
-    @property
-    def pytorch_packages(self) -> tuple[LockedPackage, ...]:
-        """Return resolved PyTorch ecosystem distributions."""
-        return tuple(
-            package for package in self.packages if package.name in PYTORCH_PACKAGES
-        )
-
-    def dependency_paths(self, target: str) -> tuple[tuple[str, ...], ...]:
-        """Return all simple paths from the candidate project to one package."""
-        normalized_target = str(canonicalize_name(target))
-        graph = {package.name: package.dependencies for package in self.packages}
-        paths: list[tuple[str, ...]] = []
-        pending: deque[tuple[str, tuple[str, ...]]] = deque(
-            [(self.project_name, (self.project_name,))]
-        )
-        while pending:
-            package, path = pending.popleft()
-            for dependency in graph.get(package, ()):
-                if dependency in path:
-                    continue
-                child_path = (*path, dependency)
-                if dependency == normalized_target:
-                    paths.append(child_path)
-                    continue
-                pending.append((dependency, child_path))
-        return tuple(paths)
+# Compatibility imports keep the existing internal API unchanged during this
+# behavior-preserving split. They are removed after callers migrate.
+LockedArtifact = WheelArtifact
+LockedPackage = CandidatePackage
+CandidateLockSnapshot = CandidateDependencyGraph
 
 
 def read_candidate_lock(
     path: Path,
     *,
     project_name: str = "uv-torch-compass-candidate",
-) -> CandidateLockSnapshot:
+) -> CandidateDependencyGraph:
     """Read a uv lockfile without trusting unbounded or ambiguous package data.
 
     Args:
@@ -114,14 +64,15 @@ def read_candidate_lock(
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ProbeError(f"failed to read candidate lockfile: {exc}") from exc
 
+    lock_schema = _lock_schema(document)
     raw_packages = document.get("package")
     if not isinstance(raw_packages, list):
-        raise ProbeError("candidate lockfile has no package array")
+        raise LockMetadataError("candidate lockfile has no package array")
     packages = tuple(_parse_package(item) for item in raw_packages)
     names = [package.name for package in packages]
     duplicates = sorted({name for name in names if names.count(name) > 1})
     if duplicates:
-        raise ProbeError(
+        raise LockMetadataError(
             "candidate lockfile contains ambiguous package identities: "
             + ", ".join(duplicates)
         )
@@ -137,13 +88,33 @@ def read_candidate_lock(
         }
     )
     if missing:
-        raise ProbeError(
+        raise LockMetadataError(
             "candidate lockfile references missing packages: " + ", ".join(missing)
         )
-    return CandidateLockSnapshot(normalized_project, packages)
+    return CandidateDependencyGraph(
+        normalized_project,
+        packages,
+        lock_schema=lock_schema,
+    )
 
 
-def _parse_package(value: object) -> LockedPackage:
+def _lock_schema(document: Mapping[str, object]) -> LockSchemaIdentity:
+    version = document.get("version")
+    revision = document.get("revision")
+    if not isinstance(version, int) or isinstance(version, bool) or version <= 0:
+        raise LockMetadataError("candidate lockfile has an invalid schema version")
+    if version != 1:
+        raise UnsupportedLockSchemaError(
+            f"candidate lockfile schema {version} is not supported"
+        )
+    if revision is not None and (
+        not isinstance(revision, int) or isinstance(revision, bool) or revision < 0
+    ):
+        raise LockMetadataError("candidate lockfile has an invalid revision")
+    return LockSchemaIdentity(version, revision)
+
+
+def _parse_package(value: object) -> CandidatePackage:
     if not isinstance(value, Mapping):
         raise ProbeError("candidate lockfile contains a non-table package")
     name = value.get("name")
@@ -172,7 +143,7 @@ def _parse_package(value: object) -> LockedPackage:
         raise ProbeError(
             f"candidate lockfile package {name!r} has too many wheel artifacts"
         )
-    return LockedPackage(
+    return CandidatePackage(
         str(canonicalize_name(name)),
         version,
         redact(source_url),
@@ -189,7 +160,7 @@ def _source_identity(source: Mapping[str, object]) -> tuple[str, object]:
     return "unknown", ""
 
 
-def _parse_artifact(value: object, *, package: str) -> LockedArtifact:
+def _parse_artifact(value: object, *, package: str) -> WheelArtifact:
     if not isinstance(value, Mapping):
         raise ProbeError(
             f"candidate lockfile package {package!r} has a non-table wheel artifact"
@@ -205,11 +176,13 @@ def _parse_artifact(value: object, *, package: str) -> LockedArtifact:
         raise ProbeError(
             f"candidate lockfile package {package!r} has an invalid wheel hash"
         )
-    if not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+    if size is not None and (
+        not isinstance(size, int) or isinstance(size, bool) or size <= 0
+    ):
         raise ProbeError(
             f"candidate lockfile package {package!r} has an invalid wheel size"
         )
-    return LockedArtifact(redact(url), hash_value, size)
+    return WheelArtifact(redact(url), hash_value, size)
 
 
 def _dependency_name(value: object, *, package: str) -> str:

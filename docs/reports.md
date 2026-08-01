@@ -20,11 +20,11 @@ uv-torch-compass plan --output-format json > result.json
 
 stdout contains exactly one final JSON object. Progress and warnings go to stderr, so redirecting stdout produces a parseable document.
 
-The schema version is `7`. Candidate resolution, artifact evidence, and later failures are represented separately:
+The schema version is `8`. Candidate resolution, metadata evidence, version search, and later failures are represented separately:
 
 ```json
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "operation": "plan",
   "status": "failed",
   "exit_code": 1,
@@ -45,6 +45,10 @@ The schema version is `7`. Candidate resolution, artifact evidence, and later fa
       "status": "failed",
       "reason": "A required wheel is unavailable for the selected platform.",
       "compatibility": "strict",
+      "framework": {
+        "requested": ["vllm==0.19.1"],
+        "resolved": {"vllm": "0.19.1"}
+      },
       "framework_compatibility": null,
       "resolution": {
         "status": "resolved",
@@ -62,7 +66,9 @@ The schema version is `7`. Candidate resolution, artifact evidence, and later fa
             "index": "https://download.pytorch.org/whl/cu126"
           }
         },
-        "package_count": 182
+        "package_count": 182,
+        "evidence_source": "workspace-metadata",
+        "lock_schema": null
       },
       "phases": {
         "lock": "passed",
@@ -102,6 +108,7 @@ The schema version is `7`. Candidate resolution, artifact evidence, and later fa
     "common_blockers": [],
     "suggestions": []
   },
+  "failure_category": "dependency-unsatisfiable",
   "selected_backend": "",
   "selected_index": "",
   "selected_gpu": {},
@@ -113,6 +120,7 @@ The schema version is `7`. Candidate resolution, artifact evidence, and later fa
   "required_environment": "sys_platform == 'linux' and platform_machine == 'x86_64'",
   "probe_contract": {},
   "framework_validation": [],
+  "framework_version_selection": null,
   "operation_state": {
     "applied": false,
     "report_written": false
@@ -129,11 +137,11 @@ The schema version is `7`. Candidate resolution, artifact evidence, and later fa
 
 The actual document also includes the target package, proposed diff, run log, and non-secret diagnostic metadata. GPU metadata contains the selected device, NVIDIA driver version, and the CUDA maximum printed by `nvidia-smi`.
 
-Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, `phases`, and optional `resolution`, `framework_compatibility`, and `failure` objects. The five phases are `lock`, `artifact`, `install`, `runtime`, and `framework`. Once locking succeeds, `resolution` retains the exact execution environment, PyTorch packages, and framework-related package versions even if a later phase fails.
+Each `candidate_attempts` entry has `backend`, `stage`, `status`, `reason`, `compatibility`, `phases`, `framework`, and optional `resolution`, `framework_compatibility`, and `failure` objects. The `framework` object keeps the requested requirement separate from the version actually resolved for that attempt. The five phases are `lock`, `artifact`, `install`, `runtime`, and `framework`. Once locking succeeds, `resolution` retains the exact execution environment, metadata source, fallback lock schema, PyTorch packages, and framework-related package versions even if a later phase fails.
 
 `blocking_summary` groups the same blocker across candidates while preserving every attempt, including candidates skipped after a conclusive failure. It distinguishes “no candidate resolved” from “PyTorch resolved but a later package or validation failed.” Missing facts are JSON `null`; they are never guessed.
 
-Schema 7 also records the executed `probe_contract`, automatic or explicit `framework_validation` trigger, filtered child-environment policy, scoped source anchors, final operation state, and reviewed framework-catalog provenance. A successful CUDA `validation` includes:
+Schema 8 adds `failure_category` and `framework_version_selection`. The category distinguishes `dependency-unsatisfiable`, `framework-cuda-incompatible`, `framework-api-incompatible`, `lock-schema-unsupported`, and `tool-validation-error` without discarding candidate-level detail. A successful bounded vLLM search records the original request, rejected releases, and verified release. The report also records the executed `probe_contract`, automatic or explicit `framework_validation` trigger, filtered child-environment policy, scoped source anchors, final operation state, and reviewed framework-catalog provenance. A successful CUDA `validation` includes:
 
 - resolved PyTorch CUDA runtime and runtime-component version;
 - required minimum driver and `strict`, `minor`, or `unsupported` classification;

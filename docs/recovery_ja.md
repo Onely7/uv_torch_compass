@@ -68,7 +68,7 @@ log には phase、マスク済み subprocess 出力、package version、ロー�
 | --- | --- |
 | `uv was not found in PATH` | 同じ shell で `uv --version` を実行する |
 | backend 選択が未対応 | uv を更新し、`uv pip install --help` に `--torch-backend` があるか確認する |
-| uv が 0.11.28 より古いという警告 | 可能なら uv を更新する。選択 install に未対応の場合、artifact の事前検査は省略するが、完全検証は引き続き実行する |
+| uv が 0.11.28 より古いという警告 | 可能なら uv を更新する。metadata と選択 install は別々に確認し、fallback を使う場合も完全検証は省略しない |
 | Linux 専用 command の失敗 | `plan`、`apply`、`check` は Linux で実行する。help/version だけはほかの OS でも動く |
 | 選択 Python に適用できる PyTorch requirement がない | extra・group と PEP 508 の Python・implementation marker を確認する |
 | `nvidia-smi` の失敗または CUDA version 不在 | NVIDIA driver、device の可視性、`CUDA_VISIBLE_DEVICES` を確認する |
@@ -81,6 +81,9 @@ log には phase、マスク済み subprocess 出力、package version、ロー�
 | `framework-cuda-abi` | 必要な CUDA variant または `libcudart.so.N` の major を候補と driver に照合する。対応 vLLM wheel を選ぶ、必要 backend に対応する driver へ更新する、または vLLM を source build する |
 | `DTensor` を含む `framework-api-incompatibility` | 表示した依存経路を確認する。確認済みの vLLM 0.6.0 の場合、Transformers を 4.44.2 に制約する、`cu121` を選ぶ、または vLLM を更新する。backend 非依存の失敗では後続候補の install を止める |
 | 候補の source 方針を準備できない | 対象 project が使う path、Git、URL、workspace、constraint、override、index source を確認する。候補検証では関連 source を PyPI に暗黙置換せず保持する |
+| `lock-schema-unsupported` | fallback lock parser が生成済み schema を認識できない。uv-torch-compass を更新するか、対応済み uv を使う。backend がないことを示す失敗ではない |
+| `tool-validation-error` | 拒否された metadata field を private log で確認する。metadata の境界を通るまで候補を検証済みとして扱わない |
+| vLLM の範囲指定が非互換な最新版を選ぶ | Requested、Resolved、Rejected を確認する。同じ backend で最大16 releaseを検証し、全検証を通った release だけを管理 constraint として提案する |
 | 候補の `lock` 失敗 | 候補の failure と private log で package、requirement、index、platform を確認する。有効な lock を解析できるまでは PyTorch の解決成功として表示しない |
 | PyTorch 解決後の候補 `install` 失敗 | 最初に `Resolved PyTorch` を確認し、次に原因 package と依存経路を調べる。すべての候補で wheel がない package は CUDA backend を変えても解決しない |
 | project の `uv lock` 失敗 | 選択していない scope や別 workspace member を含む uv の resolver 説明を読む |

@@ -6,6 +6,7 @@ import tomlkit
 
 from uv_torch_compass.domain import BackendCandidate, Channel, Scope
 from uv_torch_compass.errors import ConfigurationError, ProjectUpdateError
+from uv_torch_compass.framework_candidate_policy import FrameworkVersionSelection
 from uv_torch_compass.project_metadata import (
     read_configured_backend,
     read_project_requirements,
@@ -140,6 +141,61 @@ def test_managed_source_anchors_are_idempotent_and_replaceable(
     assert document["tool"]["uv-torch-compass"]["state"]["managed-source-anchors"] == [
         {"package": "torchvision", "scope": "base"}
     ]
+
+
+def test_verified_vllm_version_is_managed_as_a_uv_constraint(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    _write(
+        pyproject,
+        """
+        [project]
+        name = "target"
+        version = "0.1.0"
+        dependencies = ["vllm>=0.19.1", "torch"]
+
+        [tool.uv]
+        constraint-dependencies = ["numpy<3", "vllm==0.25.1"]
+
+        [tool.uv-torch-compass.state]
+        managed-framework-constraints = [
+          { package = "vllm", requested = "vllm>=0.19.1", requirement = "vllm==0.25.1" },
+        ]
+        """,
+    )
+    requirements = read_project_requirements(
+        pyproject, extras=(), groups=(), overrides=()
+    )
+
+    content, changes = render_project_configuration(
+        pyproject,
+        requirements=requirements,
+        overrides=(),
+        backend=BackendCandidate("cu129"),
+        numpy_lt2_required=False,
+        framework_version_selection=FrameworkVersionSelection(
+            "vllm",
+            "vllm>=0.19.1",
+            "0.19.1",
+            ("0.26.0", "0.25.1"),
+        ),
+    )
+
+    document = tomlkit.parse(content).unwrap()
+    assert document["project"]["dependencies"][0] == "vllm>=0.19.1"
+    assert document["tool"]["uv"]["constraint-dependencies"] == [
+        "numpy<3",
+        "vllm==0.19.1",
+    ]
+    assert document["tool"]["uv-torch-compass"]["state"][
+        "managed-framework-constraints"
+    ] == [
+        {
+            "package": "vllm",
+            "requested": "vllm>=0.19.1",
+            "requirement": "vllm==0.19.1",
+        }
+    ]
+    assert any("constrained vllm>=0.19.1" in change for change in changes)
 
 
 def test_managed_source_anchor_stays_in_its_optional_scope(tmp_path: Path) -> None:

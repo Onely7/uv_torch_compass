@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from packaging.requirements import InvalidRequirement, Requirement
@@ -16,10 +16,16 @@ from uv_torch_compass.candidate_failures import (
     FrameworkCompatibilityDecision,
     FrameworkFailure,
     FrameworkFailureKind,
+    ToolFailureKind,
+    ToolValidationFailure,
 )
 from uv_torch_compass.candidate_lock import read_candidate_lock
+from uv_torch_compass.candidate_metadata import CandidateDependencyGraph
 from uv_torch_compass.candidate_project import render_candidate_project
 from uv_torch_compass.candidate_resolution import CandidateResolution
+from uv_torch_compass.candidate_workspace_metadata import (
+    read_candidate_workspace_metadata,
+)
 from uv_torch_compass.command_runner import ProcessRunner, sanitized_environment
 from uv_torch_compass.cuda_compatibility import (
     CompatibilityDecision,
@@ -43,9 +49,16 @@ from uv_torch_compass.errors import (
     CandidateResolutionError,
     CommandTimeoutError,
     ConfigurationError,
+    LockMetadataError,
     ProbeError,
+    UnsupportedLockSchemaError,
 )
 from uv_torch_compass.framework_artifact import FrameworkArtifactInspector
+from uv_torch_compass.framework_candidate_policy import (
+    FrameworkVersionSelection,
+    direct_vllm_candidate_constraint,
+    vllm_version_search_request,
+)
 from uv_torch_compass.framework_diagnostics import (
     artifact_failure,
     catalog_dependency_failure,
@@ -76,6 +89,8 @@ from uv_torch_compass.resolution_diagnostics import (
 from uv_torch_compass.source_ownership import derive_lock_source_anchors
 from uv_torch_compass.uv_commands import UvCommandClient
 
+_MAX_VLLM_VERSION_ATTEMPTS = 16
+
 
 @dataclass(slots=True)
 class CandidateProbeService:
@@ -102,6 +117,7 @@ class CandidateProbeService:
         repr=False,
     )
     _artifact_fallback_warned: bool = field(default=False, init=False, repr=False)
+    _metadata_fallback_warned: bool = field(default=False, init=False, repr=False)
 
     def find_working_candidate(
         self,
@@ -115,8 +131,24 @@ class CandidateProbeService:
             CommandError: If every candidate fails installation or runtime checks.
         """
         attempts = list(prior_attempts)
-        required_backend: str | None = None
+        framework_requests = tuple(
+            str(requirement)
+            for requirement in self.requirements.requirement_for("vllm")
+        )
+        direct_constraint = direct_vllm_candidate_constraint(
+            self.requirements,
+            self.target_pyproject,
+        )
+        required_backend = (
+            direct_constraint.required_backend
+            if direct_constraint is not None
+            else None
+        )
         required_cuda_major: int | None = None
+        version_search_request = vllm_version_search_request(
+            self.requirements,
+            self.target_pyproject,
+        )
         for candidate in candidates:
             skip_reason = _framework_candidate_skip_reason(
                 candidate,
@@ -131,10 +163,53 @@ class CandidateProbeService:
                         "skipped",
                         skip_reason,
                         "incompatible",
+                        framework_requests=framework_requests,
                     )
                 )
                 continue
-            result = self._probe_candidate(candidate)
+            rejected_vllm_versions: list[str] = []
+            while True:
+                result = self._probe_candidate(
+                    candidate,
+                    vllm_exclusions=tuple(rejected_vllm_versions),
+                )
+                if (
+                    result.outcome is None
+                    and version_search_request is not None
+                    and len(rejected_vllm_versions) < _MAX_VLLM_VERSION_ATTEMPTS
+                    and (
+                        rejected_version := _retryable_vllm_version(
+                            result,
+                            rejected_vllm_versions,
+                        )
+                    )
+                    is not None
+                ):
+                    failure = result.failure
+                    if failure is None:
+                        raise ProbeError(
+                            "candidate version rejection omitted its diagnostic"
+                        )
+                    attempts.append(
+                        CandidateAttempt(
+                            candidate.value,
+                            result.stage,
+                            "failed",
+                            failure.summary,
+                            self._compatibility_for(candidate).level.value,
+                            failure,
+                            result.resolution,
+                            result.framework_compatibility,
+                            framework_requests,
+                        )
+                    )
+                    rejected_vllm_versions.append(rejected_version)
+                    self.reporter.info(
+                        f"candidate {candidate.value}: retrying {version_search_request} "
+                        f"without vllm=={rejected_version}"
+                    )
+                    continue
+                break
             if result.outcome is None:
                 failure = result.failure
                 if failure is None:
@@ -149,6 +224,7 @@ class CandidateProbeService:
                         failure,
                         result.resolution,
                         result.framework_compatibility,
+                        framework_requests,
                     )
                 )
                 if isinstance(failure, FrameworkFailure):
@@ -160,6 +236,7 @@ class CandidateProbeService:
                                 candidate,
                                 "the same backend-independent framework failure "
                                 "would affect this candidate",
+                                framework_requests,
                             )
                         )
                         break
@@ -168,6 +245,21 @@ class CandidateProbeService:
                         required_cuda_major = requirement.required_cuda_major
                 continue
             outcome = result.outcome
+            if rejected_vllm_versions and outcome.resolution is not None:
+                selected_vllm = outcome.resolution.lock.package("vllm")
+                if selected_vllm is None:
+                    raise ProbeError(
+                        "verified vLLM search omitted its resolved package"
+                    )
+                outcome = replace(
+                    outcome,
+                    framework_version_selection=FrameworkVersionSelection(
+                        "vllm",
+                        version_search_request or "vllm",
+                        selected_vllm.version,
+                        tuple(rejected_vllm_versions),
+                    ),
+                )
             attempts.append(
                 CandidateAttempt(
                     candidate.value,
@@ -177,6 +269,7 @@ class CandidateProbeService:
                     outcome.compatibility.level.value,
                     resolution=outcome.resolution,
                     framework_compatibility=outcome.framework_compatibility,
+                    framework_requests=framework_requests,
                 )
             )
             if outcome.compatibility.level is CompatibilityLevel.MINOR:
@@ -191,6 +284,7 @@ class CandidateProbeService:
                 outcome.framework_validation,
                 outcome.resolution,
                 outcome.framework_compatibility,
+                outcome.framework_version_selection,
             )
         attempted = ", ".join(candidate.value for candidate in candidates)
         if any(attempt.resolution is not None for attempt in attempts):
@@ -205,7 +299,12 @@ class CandidateProbeService:
             tuple(attempts),
         )
 
-    def _probe_candidate(self, candidate: BackendCandidate) -> CandidateProbeResult:
+    def _probe_candidate(
+        self,
+        candidate: BackendCandidate,
+        *,
+        vllm_exclusions: tuple[str, ...] = (),
+    ) -> CandidateProbeResult:
         candidate_root = Path(
             tempfile.mkdtemp(
                 prefix=f"candidate-{candidate.value}-", dir=self.temporary_root
@@ -213,7 +312,11 @@ class CandidateProbeService:
         )
         venv = candidate_root / "environment"
         self.reporter.info(f"testing backend candidate {candidate.value}")
-        prepared = self._resolve_candidate(candidate, candidate_root)
+        prepared = self._resolve_candidate(
+            candidate,
+            candidate_root,
+            vllm_exclusions=vllm_exclusions,
+        )
         if isinstance(prepared, CandidateProbeResult):
             return prepared
         resolution, project_dir = prepared
@@ -429,6 +532,8 @@ class CandidateProbeService:
         self,
         candidate: BackendCandidate,
         candidate_root: Path,
+        *,
+        vllm_exclusions: tuple[str, ...] = (),
     ) -> tuple[CandidateResolution, Path] | CandidateProbeResult:
         requirements = list(self.requirements.probe_requirements)
         anchored = {
@@ -446,6 +551,7 @@ class CandidateProbeService:
                     candidate=candidate,
                     environment=self.execution_environment,
                     workspace_members=dict(self.workspace_members),
+                    vllm_exclusions=vllm_exclusions,
                 )
                 locked = self.uv.lock_candidate(project.parent, self.project_python)
             except CommandTimeoutError:
@@ -491,12 +597,39 @@ class CandidateProbeService:
                 resolution = CandidateResolution(
                     candidate,
                     self.execution_environment,
-                    read_candidate_lock(project.parent / "uv.lock"),
+                    self._candidate_dependency_graph(project.parent),
+                )
+            except UnsupportedLockSchemaError as exc:
+                self.reporter.warn(f"candidate {candidate.value}: {exc}")
+                return CandidateProbeResult.failed(
+                    ToolValidationFailure(
+                        ToolFailureKind.UNSUPPORTED_LOCK_SCHEMA,
+                        "The generated lockfile uses an unsupported schema.",
+                        (
+                            "Update uv-torch-compass or use a supported uv release.",
+                            "Inspect the private log for the reported schema identity.",
+                        ),
+                    ),
+                    stage="lock",
+                )
+            except LockMetadataError as exc:
+                self.reporter.warn(f"candidate {candidate.value}: {exc}")
+                return CandidateProbeResult.failed(
+                    ToolValidationFailure(
+                        ToolFailureKind.METADATA_VALIDATION,
+                        "The generated dependency metadata could not be validated safely.",
+                        ("Inspect the private log for the rejected metadata field.",),
+                    ),
+                    stage="lock",
                 )
             except ProbeError as exc:
                 self.reporter.warn(f"candidate {candidate.value}: {exc}")
                 return CandidateProbeResult.failed(
-                    runtime_failure("The candidate lockfile could not be validated."),
+                    ToolValidationFailure(
+                        ToolFailureKind.METADATA_VALIDATION,
+                        "The generated dependency metadata could not be read safely.",
+                        ("Inspect the private log for the metadata read failure.",),
+                    ),
                     stage="lock",
                 )
             mismatched = tuple(
@@ -540,6 +673,30 @@ class CandidateProbeService:
             stage="lock",
         )
 
+    def _candidate_dependency_graph(
+        self,
+        project_dir: Path,
+    ) -> CandidateDependencyGraph:
+        """Read a candidate graph through uv's JSON boundary when available."""
+        metadata_method = getattr(self.uv, "workspace_metadata", None)
+        if callable(metadata_method):
+            result = metadata_method(project_dir)
+            self.reporter.detail(result.stdout + result.stderr)
+            if result.returncode == 0:
+                try:
+                    return read_candidate_workspace_metadata(result.stdout)
+                except ProbeError as exc:
+                    self.reporter.detail(
+                        f"workspace metadata could not be used safely: {exc}"
+                    )
+            if not self._metadata_fallback_warned:
+                self.reporter.warn(
+                    "uv workspace metadata resolution is unavailable; using the "
+                    "validated lockfile fallback"
+                )
+                self._metadata_fallback_warned = True
+        return read_candidate_lock(project_dir / "uv.lock")
+
     def _finalize_candidate(
         self,
         venv: Path,
@@ -574,6 +731,7 @@ class CandidateProbeService:
                 framework_probes,
                 resolution,
                 framework_compatibility,
+                outcome.framework_version_selection,
             )
         )
 
@@ -769,7 +927,7 @@ def _framework_candidate_skip_reason(
     required_cuda_major: int | None,
 ) -> str | None:
     if required_backend is not None and candidate.value != required_backend:
-        return f"vLLM requires {required_backend}; this candidate was not installed"
+        return f"vLLM requires {required_backend}; this candidate was not resolved or installed"
     if required_cuda_major is None:
         return None
     if not candidate.is_cuda or _cuda_major(candidate.value) != required_cuda_major:
@@ -786,6 +944,7 @@ def _skipped_framework_attempts(
     candidates: tuple[BackendCandidate, ...],
     current: BackendCandidate,
     reason: str,
+    framework_requests: tuple[str, ...] = (),
 ) -> tuple[CandidateAttempt, ...]:
     found_current = False
     skipped: list[CandidateAttempt] = []
@@ -801,6 +960,25 @@ def _skipped_framework_attempts(
                 "skipped",
                 reason,
                 "not-tested",
+                framework_requests=framework_requests,
             )
         )
     return tuple(skipped)
+
+
+def _retryable_vllm_version(
+    result: CandidateProbeResult,
+    rejected_versions: list[str],
+) -> str | None:
+    failure = result.failure
+    resolution = result.resolution
+    if (
+        not isinstance(failure, FrameworkFailure)
+        or failure.kind is not FrameworkFailureKind.CUDA_ABI
+        or resolution is None
+    ):
+        return None
+    vllm = resolution.lock.package("vllm")
+    if vllm is None or vllm.version in rejected_versions:
+        return None
+    return vllm.version

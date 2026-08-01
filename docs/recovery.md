@@ -68,7 +68,7 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | --- | --- |
 | `uv was not found in PATH` | Run `uv --version` in the same shell. |
 | backend selection is unsupported | Update uv and check that `uv pip install --help` lists `--torch-backend`. |
-| uv older than 0.11.28 warning | Update uv when possible. Without selective-install capabilities, artifact preflight is skipped but full validation still runs. |
+| uv older than 0.11.28 warning | Update uv when possible. Metadata and selective-install capabilities are checked separately; their fallbacks do not skip full validation. |
 | Linux-only command failure | Run `plan`, `apply`, or `check` on Linux; only help/version are cross-platform. |
 | no selected PyTorch requirement applies | Check selected extras/groups and PEP 508 Python or implementation markers. |
 | `nvidia-smi` failure or missing CUDA version | Check NVIDIA driver installation, device visibility, and `CUDA_VISIBLE_DEVICES`. |
@@ -81,6 +81,9 @@ The log contains phases, redacted subprocess output, package versions, local pat
 | `framework-cuda-abi` | Compare the required CUDA variant or `libcudart.so.N` major with the candidate and driver. Select a compatible vLLM wheel, update the driver for the required backend, or build vLLM from source. |
 | `framework-api-incompatibility` mentioning `DTensor` | Follow the reported dependency path. For the reviewed vLLM 0.6.0 case, constrain Transformers to 4.44.2, select `cu121`, or upgrade vLLM. Backend-independent failures stop later candidate installs. |
 | candidate source policy could not be prepared | Inspect path, Git, URL, workspace, constraint, override, and index sources used by the target project. Candidate verification preserves relevant sources instead of silently replacing them with PyPI. |
+| `lock-schema-unsupported` | The fallback lock reader does not recognize the generated schema. Update uv-torch-compass or use a supported uv version. This is a tool metadata error, not proof that the backend is unavailable. |
+| `tool-validation-error` | Inspect the private log for the rejected metadata field. Do not treat the candidate as verified until the metadata boundary succeeds. |
+| a vLLM range resolves to an incompatible latest release | Read Requested, Resolved, and Rejected fields. The tool can test up to 16 releases on the same backend and proposes only a fully verified release as a managed constraint. |
 | no usable backend | Read each failed candidate's package, requirement, dependency path, and index. Use its suggestions; inspect the private log when the failure kind is `unknown`. |
 | candidate `lock` failure | Read the candidate failure and private log for the package, requirement, index, and platform. No PyTorch resolution is claimed unless a valid lock was parsed. |
 | candidate `install` failure after PyTorch resolved | Read `Resolved PyTorch` first, then inspect the reported blocking package and dependency path. Changing the CUDA backend will not fix a wheel that is unavailable for every candidate. |

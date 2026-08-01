@@ -32,6 +32,13 @@ class FrameworkFailureKind(str, Enum):
     METADATA = "framework-metadata"
 
 
+class ToolFailureKind(str, Enum):
+    """Classify failures in uv-torch-compass metadata validation itself."""
+
+    UNSUPPORTED_LOCK_SCHEMA = "unsupported-lock-schema"
+    METADATA_VALIDATION = "tool-metadata-validation"
+
+
 class FrameworkProbeTrigger(str, Enum):
     """Record why a framework probe was included in a validation run."""
 
@@ -166,4 +173,13 @@ class FrameworkFailure:
     backend_independent: bool = False
 
 
-CandidateFailure = ResolutionFailure | FrameworkFailure
+@dataclass(frozen=True, slots=True)
+class ToolValidationFailure:
+    """Describe a failure to validate tool-owned intermediate metadata."""
+
+    kind: ToolFailureKind
+    summary: str
+    suggestions: tuple[str, ...] = ()
+
+
+CandidateFailure = ResolutionFailure | FrameworkFailure | ToolValidationFailure

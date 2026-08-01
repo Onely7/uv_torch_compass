@@ -108,6 +108,16 @@ def catalog_requirement(package: LockedPackage) -> FrameworkBinaryRequirement | 
     )
 
 
+def catalog_backend_for_version(version: str) -> str | None:
+    """Return the reviewed CUDA backend for an exact vLLM version."""
+    try:
+        parsed = Version(version)
+    except InvalidVersion:
+        return None
+    entry = next((item for item in _CATALOG if item.version == parsed), None)
+    return entry.cuda_variant if entry is not None else None
+
+
 def inspect_vllm_native_libraries(
     environment: Path,
     *,

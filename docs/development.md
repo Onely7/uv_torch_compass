@@ -29,6 +29,8 @@ Ruff applies PEP 257 `D` rules with the Google pydocstyle convention to producti
 
 pytest measures branch coverage and fails below 85%. Transaction, process, workflow, rollback, JSON, marker, and source-update failures deserve direct tests when changed.
 
+Candidate metadata tests cover uv workspace metadata and the supported lockfile fallback. The lock fixtures include uv 0.9.28/0.11.28-style wheel entries for `cu121`, `cu126`, `cu128`, and `cu129`, including entries without the optional `size` field. Add a fixture and an explicit schema decision before accepting a new lock representation.
+
 pre-commit also checks TOML, YAML, trailing whitespace, ShellCheck inputs when present, and committed secrets with gitleaks.
 
 ## Build and smoke-test
